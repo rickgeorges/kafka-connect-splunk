@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConcurrentHec.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.hecclient</a> &gt; <span class="el_source">ConcurrentHec.java</span></div><h1>ConcurrentHec.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.hecclient;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.*;
+
+public class ConcurrentHec implements HecInf {
+<span class="fc" id="L27">    private static final Logger log = LoggerFactory.getLogger(ConcurrentHec.class);</span>
+
+    private LinkedBlockingQueue&lt;EventBatch&gt; batches;
+    private ExecutorService executorService;
+    private List&lt;Hec&gt; hecs;
+    private PollerCallback pollerCallback;
+    private volatile boolean stopped;
+
+    public ConcurrentHec(int numberOfThreads, boolean useAck, HecConfig config, PollerCallback cb) {
+<span class="fc" id="L36">        this(numberOfThreads, useAck, config, cb, new LoadBalancer());</span>
+<span class="fc" id="L37">    }</span>
+
+<span class="fc" id="L39">    public ConcurrentHec(int numberOfThreads, boolean useAck, HecConfig config, PollerCallback cb, LoadBalancerInf loadBalancer) {</span>
+<span class="fc" id="L40">        batches = new LinkedBlockingQueue&lt;&gt;(100);</span>
+<span class="fc" id="L41">        ThreadFactory e = (Runnable r) -&gt; new Thread(r, &quot;Concurrent-HEC-worker&quot;);</span>
+<span class="fc" id="L42">        executorService = Executors.newFixedThreadPool(numberOfThreads, e);</span>
+<span class="fc" id="L43">        initHec(numberOfThreads, useAck, config, cb, loadBalancer);</span>
+<span class="fc" id="L44">        pollerCallback = cb;</span>
+<span class="fc" id="L45">        stopped = false;</span>
+
+<span class="fc bfc" id="L47" title="All 2 branches covered.">        for (int i = 0; i &lt; numberOfThreads; i++) {</span>
+<span class="fc" id="L48">            final int id = i;</span>
+<span class="fc" id="L49">            Runnable r = () -&gt; {</span>
+<span class="fc" id="L50">                run(id);</span>
+<span class="fc" id="L51">            };</span>
+<span class="fc" id="L52">            executorService.submit(r);</span>
+        }
+<span class="fc" id="L54">    }</span>
+
+    @Override
+    public final void send(final EventBatch batch) {
+        try {
+<span class="fc" id="L59">            batches.offer(batch, 1000, TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L60">        } catch (InterruptedException ex) {</span>
+<span class="nc" id="L61">            throw new HecException(&quot;failed to offer batch into queue&quot;, ex);</span>
+<span class="fc" id="L62">        }</span>
+<span class="fc" id="L63">    }</span>
+
+    @Override
+    public final void close() {
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (stopped) {</span>
+<span class="fc" id="L68">            return;</span>
+        }
+
+<span class="fc" id="L71">        stopped = true;</span>
+        // executorService.shutdownNow();
+<span class="fc" id="L73">        executorService.shutdown();</span>
+<span class="fc" id="L74">    }</span>
+
+    private void run(int id) {
+        // Note, never exit this function unless a shutdown, otherwise the worker thread will be gone.
+<span class="fc" id="L78">        final Hec hec = hecs.get(id);</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        while (!stopped) {</span>
+            EventBatch batch;
+            try {
+<span class="fc" id="L82">                batch = batches.poll(1, TimeUnit.SECONDS);</span>
+<span class="nc" id="L83">            } catch (InterruptedException ex) {</span>
+<span class="nc" id="L84">                continue;</span>
+<span class="fc" id="L85">            }</span>
+
+<span class="fc bfc" id="L87" title="All 2 branches covered.">            if (batch != null) {</span>
+<span class="fc" id="L88">                send(hec, batch);</span>
+            }
+<span class="fc" id="L90">        }</span>
+<span class="fc" id="L91">        hec.close();</span>
+<span class="fc" id="L92">    }</span>
+
+    private void send(final Hec hec, final EventBatch batch) {
+        try {
+<span class="fc" id="L96">            hec.send(batch);</span>
+<span class="fc" id="L97">        } catch (Exception ex) {</span>
+<span class="fc" id="L98">            batch.fail();</span>
+<span class="fc" id="L99">            pollerCallback.onEventFailure(Arrays.asList(batch), ex);</span>
+<span class="fc" id="L100">            log.error(&quot;sending batch to splunk encountered error&quot;, ex);</span>
+<span class="fc" id="L101">        }</span>
+<span class="fc" id="L102">    }</span>
+
+    private void initHec(int count, boolean useAck, HecConfig config, PollerCallback cb, LoadBalancerInf loadBalancer) {
+<span class="fc" id="L105">        config.setTotalChannels(Math.max(config.getTotalChannels() / count, 1));</span>
+<span class="fc" id="L106">        hecs = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">            if (useAck) {</span>
+<span class="fc" id="L109">                hecs.add(Hec.newHecWithAck(config, cb, loadBalancer));</span>
+            } else {
+<span class="fc" id="L111">                hecs.add(Hec.newHecWithoutAck(config, cb, loadBalancer));</span>
+            }
+        }
+<span class="fc" id="L114">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

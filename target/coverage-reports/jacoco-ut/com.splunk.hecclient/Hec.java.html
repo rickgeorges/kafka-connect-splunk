@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Hec.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.hecclient</a> &gt; <span class="el_source">Hec.java</span></div><h1>Hec.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.hecclient;
+
+import org.apache.http.impl.client.CloseableHttpClient;
+
+import java.io.FileInputStream;
+import java.io.IOException;
+
+import java.security.cert.CertificateException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.KeyManagementException;
+
+import org.apache.commons.lang3.StringUtils;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+
+/**
+ * Hec is the central class which will construct the HTTP Event Collector Client to send messages to Splunk.
+ *
+ * There a 2 classes of HEC client
+ *       1.) With Acknowledgement
+ *       2.) Without Acknowledgement
+ * &lt;p&gt;
+ * This class contains factory methods to configure the Hec Client which is reliant on 4 key components
+ *       1.) HecConfig - The Hec Configuration(HEC Uri, HEc tokens, total channels, etc..)
+ *       2.) LoadBalancerInf - The Load Balancer Interface provides Channel Tracking and Event Batch sending functionality
+ *       3.) Poller - For the with Acknowledgement class of Hec clients. Poller will register a HECAckPoller which is
+ *           responsible for polling the Splunk HEC endpoint and providing success/failure information per batch.
+ *       4.) CloseableHttpClient is the httpclient used to send Event batches to Splunk. close() is used sparingly and will
+ *           only close in the event of a failure or finishing of the Poller.
+ *
+ * @version     1.1.0
+ * @since       1.0.0
+ * @see         HecConfig
+ * @see         LoadBalancerInf
+ * @see         Poller
+ * @see         CloseableHttpClient
+ * @see         HecAckPoller
+ */
+public class Hec implements HecInf {
+    private LoadBalancerInf loadBalancer;
+    private Poller poller;
+    private CloseableHttpClient httpClient;
+<span class="fc" id="L62">    private boolean ownHttpClient = false; //flag for when the HTTPClient is created as part of this Hec object being created</span>
+
+   /**
+    * Factory method to creates a new HEC Client with Acknowledgment.
+    *
+    * @param config    HecConfig containing settings to configure HEC Client.
+    * @param callback  PollerCallback providing Acknowledgement functionality.
+    * @return          Newly created HEC Client object.
+    * @since           1.0.0
+    * @see             HecConfig
+    * @see             PollerCallback
+    */
+    public static Hec newHecWithAck(HecConfig config, PollerCallback callback) {
+<span class="fc" id="L75">        Hec hec = newHecWithAck(config, Hec.createHttpClient(config), callback);</span>
+<span class="fc" id="L76">        hec.setOwnHttpClient(true);</span>
+<span class="fc" id="L77">        return hec;</span>
+    }
+
+   /**
+    * Factory method to create a new HEC Client with Acknowledgment while providing a valid CloseableHttpClient.
+    *
+    * @param config      HecConfig containing settings to configure HEC Client
+    * @param httpClient  CloseableHttpClient provided to factory to be used sending events.
+    * @param callback    PollerCallback providing Acknowledgement functionality.
+    * @return            Newly created HEC Client object.
+    * @since             1.0.0
+    * @see               HecConfig
+    * @see               PollerCallback
+    * @see               CloseableHttpClient
+    */
+    public static Hec newHecWithAck(HecConfig config, CloseableHttpClient httpClient, PollerCallback callback) {
+<span class="fc" id="L93">        return new Hec(config, httpClient, createPoller(config, callback), new LoadBalancer());</span>
+    }
+
+   /**
+    * Factory method to create a new HEC Client with Acknowledgment while providing a LoadBalancer.
+    *
+    * @param config        HecConfig containing settings to configure HEC Client
+    * @param callback      PollerCallback providing Acknowledgement functionality.
+    * @param loadBalancer  Load Balancer Interface for channel management.
+    * @return              Newly created HEC Client object.
+    * @since               1.0.0
+    * @see                 HecConfig
+    * @see                 PollerCallback
+    * @see                 LoadBalancer
+    */
+    public static Hec newHecWithAck(HecConfig config, PollerCallback callback, LoadBalancerInf loadBalancer) {
+<span class="fc" id="L109">        Hec hec = new Hec(config, Hec.createHttpClient(config), createPoller(config, callback), loadBalancer);</span>
+<span class="fc" id="L110">        hec.setOwnHttpClient(true);</span>
+<span class="fc" id="L111">        return hec;</span>
+    }
+
+   /**
+    * Factory method to create a new HEC Client without Acknowledgment.
+    *
+    * @param config        HecConfig containing settings to configure HEC Client
+    * @param callback      PollerCallback providing Acknowledgement functionality.
+    * @return              Newly created HEC Client object.
+    * @since               1.0.0
+    * @see                 HecConfig
+    * @see                 PollerCallback
+    */
+    public static Hec newHecWithoutAck(HecConfig config, PollerCallback callback) {
+<span class="fc" id="L125">        Hec hec = newHecWithoutAck(config, Hec.createHttpClient(config), callback);</span>
+<span class="fc" id="L126">        hec.setOwnHttpClient(true);</span>
+<span class="fc" id="L127">        return hec;</span>
+    }
+
+   /**
+    * Factory method to create a new HEC Client without Acknowledgment while providing a valid CloseableHttpClient.
+    *
+    * @param config      HecConfig containing settings to configure HEC Client
+    * @param httpClient  CloseableHttpClient provided to factory to be used sending events.
+    * @param callback    PollerCallback providing Acknowledgement \functionality.
+    * @return            Newly created HEC Client object.
+    * @since             1.0.0
+    * @see               HecConfig
+    * @see               PollerCallback
+    * @see               CloseableHttpClient
+    */
+    public static Hec newHecWithoutAck(HecConfig config, CloseableHttpClient httpClient, PollerCallback callback) {
+<span class="fc" id="L143">        return new Hec(config, httpClient, new ResponsePoller(callback), new LoadBalancer());</span>
+    }
+
+   /**
+    * Factory method to create a new HEC Client without Acknowledgment while providing a LoadBalancer.
+    *
+    * @param config        HecConfig containing settings to configure HEC Client
+    * @param callback      PollerCallback providing Acknowledgement functionality.
+    * @param loadBalancer  Load Balancer Interface for channel management.
+    * @return              Newly created HEC Client object.
+    * @since               1.0.0
+    * @see                 HecConfig
+    * @see                 PollerCallback
+    * @see                 LoadBalancer
+    */
+    public static Hec newHecWithoutAck(HecConfig config, PollerCallback callback, LoadBalancerInf loadBalancer) {
+<span class="fc" id="L159">        Hec hec = new Hec(config, Hec.createHttpClient(config), new ResponsePoller(callback), loadBalancer);</span>
+<span class="fc" id="L160">        hec.setOwnHttpClient(true);</span>
+<span class="fc" id="L161">        return hec;</span>
+    }
+
+   /**
+    * CreatePoller creates a HecAckPoller from selected HecConfig values and a PollerCallback object.
+    * The amount of simultaneous acknowledgment threads, the polling interval and the event batch.(Send Events timeout)
+    *
+    * @param config        HecConfig containing settings to configure HEC Client
+    * @param callback      PollerCallback providing Acknowledgement functionality.
+    * @return              Newly created HECAckPoller object.
+    * @since               1.0.0
+    * @see                 HecConfig
+    * @see                 PollerCallback
+    * @see                 LoadBalancer
+    */
+    public static HecAckPoller createPoller(HecConfig config, PollerCallback callback) {
+<span class="fc" id="L177">        return new HecAckPoller(callback)</span>
+<span class="fc" id="L178">                .setAckPollInterval(config.getAckPollInterval())</span>
+<span class="fc" id="L179">                .setAckPollThreads(config.getAckPollThreads())</span>
+<span class="fc" id="L180">                .setEventBatchTimeout(config.getEventBatchTimeout());</span>
+    }
+
+   /**
+    * Hec is created to send events to Splunk's HTTP Event Collector.
+    *
+    * @param config        HecConfig containing settings to configure HEC Client
+    * @param httpClient    CloseableHttpClient provided to factory to be used sending events.
+    * @param poller        HecAckPoller for polling acknowledgments from Splunk. ReponsePoller for No acknowledgment.
+    * @param loadBalancer  Load Balancer Interface for channel management.
+    * @since               1.0.0
+    * @see                 HecConfig
+    * @see                 CloseableHttpClient
+    * @see                 Poller
+    * @see                 LoadBalancerInf
+    */
+<span class="fc" id="L196">    public Hec(HecConfig config, CloseableHttpClient httpClient, Poller poller, LoadBalancerInf loadBalancer) {</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        for (int i = 0; i &lt; config.getTotalChannels(); ) {</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">            for (String uri : config.getUris()) {</span>
+<span class="fc" id="L199">                Indexer indexer = new Indexer(uri, config.getToken(), httpClient, poller);</span>
+<span class="fc" id="L200">                indexer.setKeepAlive(config.getHttpKeepAlive());</span>
+<span class="fc" id="L201">                indexer.setBackPressureThreshold(config.getBackoffThresholdSeconds());</span>
+<span class="fc" id="L202">                loadBalancer.add(indexer.getChannel().setTracking(config.getEnableChannelTracking()));</span>
+<span class="fc" id="L203">                i++;</span>
+<span class="fc" id="L204">            }</span>
+        }
+
+<span class="fc" id="L207">        this.loadBalancer = loadBalancer;</span>
+<span class="fc" id="L208">        this.poller = poller;</span>
+<span class="fc" id="L209">        this.poller.start();</span>
+<span class="fc" id="L210">        this.httpClient = httpClient;</span>
+<span class="fc" id="L211">    }</span>
+
+   /**
+    * Setter method for when an HttpClient is created as part of this objects creation. Hec has a factory method for
+    *
+    * @param ownHttpClient  Flag for signally the CloseableHttpClient has been constructed as part of this object.
+    * @since                1.0.0
+    * @return               Instance of Hec Object
+    * @see                  CloseableHttpClient
+    */
+    public Hec setOwnHttpClient(boolean ownHttpClient) {
+<span class="fc" id="L222">        this.ownHttpClient = ownHttpClient;</span>
+<span class="fc" id="L223">        return this;</span>
+    }
+
+   /**
+    * @see HecInf#send(EventBatch)
+    */
+    @Override
+    public final void send (final EventBatch batch) {
+<span class="fc bfc" id="L231" title="All 2 branches covered.">        if (batch.isEmpty()) {</span>
+<span class="fc" id="L232">            return;</span>
+        }
+<span class="fc" id="L234">        loadBalancer.send(batch);</span>
+<span class="fc" id="L235">    }</span>
+
+   /**
+    * @see HecInf#close()
+    */
+    @Override
+    public final void close() {
+<span class="fc" id="L242">        poller.stop();</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">        if (ownHttpClient) {</span>
+            try {
+<span class="fc" id="L245">                httpClient.close();</span>
+<span class="nc" id="L246">            } catch (Exception ex) {</span>
+<span class="nc" id="L247">                throw new HecException(&quot;failed to close http client&quot;, ex);</span>
+<span class="fc" id="L248">            }</span>
+        }
+<span class="fc" id="L250">    }</span>
+
+   /**
+    * createHttpClient will construct 2 different versions of the a CloseableHttpClient depending on whether a custom
+    * trust store is to be used or a default configuration is substantial enough. When a trust store path and password
+    * is provided createHttpClient will build an SSL Context to be used with the HTTP Client from the Keystore provided
+    * in conjunction with a default TrustManager.
+    *
+    * @param config Hec Configuration used to construct
+    * @since        1.0.0
+    * @throws       HecException
+    * @return       A configured CloseableHTTPClient customized to the settings proved through config.
+    * @see          CloseableHttpClient
+    * @see          HecException
+    */
+    public static CloseableHttpClient createHttpClient(final HecConfig config) {
+<span class="fc" id="L266">        int poolSizePerDest = config.getMaxHttpConnectionPerChannel();</span>
+
+        // Code block for default client construction
+<span class="fc bfc" id="L269" title="All 2 branches covered.">        if(!config.getHasCustomTrustStore() &amp;&amp;</span>
+<span class="pc bpc" id="L270" title="1 of 2 branches missed.">           StringUtils.isBlank(config.getTrustStorePath()) &amp;&amp;</span>
+<span class="pc bpc" id="L271" title="1 of 2 branches missed.">           StringUtils.isBlank(config.getTrustStorePassword())) {  // no trust store path or password provided via config</span>
+
+<span class="fc" id="L273">            return new HttpClientBuilder().setDisableSSLCertVerification(config.getDisableSSLCertVerification())</span>
+<span class="fc" id="L274">                    .setMaxConnectionPoolSizePerDestination(poolSizePerDest)</span>
+<span class="fc" id="L275">                    .setMaxConnectionPoolSize(poolSizePerDest * config.getUris().size())</span>
+<span class="fc" id="L276">                    .build();</span>
+        }
+
+        // Code block for custom keystore client construction
+<span class="fc" id="L280">        SSLContext context = loadCustomSSLContext(config.getTrustStorePath(), config.getTrustStorePassword());</span>
+
+<span class="pc bpc" id="L282" title="1 of 2 branches missed.">        if (context != null) {</span>
+<span class="fc" id="L283">            return new HttpClientBuilder()</span>
+<span class="fc" id="L284">                .setDisableSSLCertVerification(config.getDisableSSLCertVerification())</span>
+<span class="fc" id="L285">                .setMaxConnectionPoolSizePerDestination(poolSizePerDest)</span>
+<span class="fc" id="L286">                .setMaxConnectionPoolSize(poolSizePerDest * config.getUris().size())</span>
+<span class="fc" id="L287">                .setSslContext(context)</span>
+<span class="fc" id="L288">                .build();</span>
+        }
+        else {
+             //failure configuring SSL Context created from trust store path and password values
+<span class="nc" id="L292">             throw new HecException(&quot;trust store path provided but failed to initialize ssl context&quot;);</span>
+         }
+    }
+
+   /**
+    * loadCustomSSLContext will take a path to a java key store and a password decode and load the key-store.
+    * Passing on the keystore to the loadTrustManagerFactory to retrieve an SSL Context to be used in the creation of
+    * a Hec Client with custom key store functionality.
+    *
+    * @param    path  A file path to the custom key store to be used.
+    * @param    pass  The password for the key store file.
+    * @since          1.1.0
+    * @throws         HecException
+    * @return         A configured SSLContect to be used in a CloseableHttpClient
+    * @see            KeyStore
+    * @see            SSLContext
+    */
+    public static SSLContext loadCustomSSLContext(String path, String pass) {
+        try {
+<span class="fc" id="L311">            KeyStore ks = KeyStore.getInstance(&quot;JKS&quot;);</span>
+<span class="fc" id="L312">            FileInputStream fileInputStream = new FileInputStream(path);</span>
+<span class="fc" id="L313">            ks.load(fileInputStream, pass.toCharArray());</span>
+
+<span class="fc" id="L315">            SSLContext sslContext = loadTrustManagerFactory(ks);</span>
+<span class="fc" id="L316">            fileInputStream.close();</span>
+
+<span class="fc" id="L318">            return sslContext;</span>
+<span class="nc" id="L319">        } catch (KeyStoreException | IOException | NoSuchAlgorithmException | CertificateException ex) {</span>
+<span class="nc" id="L320">            throw new HecException(&quot;error loading trust store, check values for trust store and trust store-password&quot;, ex);</span>
+        }
+    }
+
+   /**
+    * loadTrustManagerFactory will receive a KeyStore with a loaded key and return an initialized SSLContext to be used
+    * for te HEC client later.
+    *
+    * @param  keyStore A loaded keystore
+    * @since           1.1.0
+    * @throws          HecException
+    * @return          A configured SSLContext to be used in a CloseableHttpClient
+    * @see             TrustManagerFactory
+    * @see             SSLContext
+    * @see             NoSuchAlgorithmException
+    * @see             KeyStoreException
+    * @see             KeyManagementException
+    */
+    public static SSLContext loadTrustManagerFactory(KeyStore keyStore) {
+        try {
+<span class="fc" id="L340">            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());</span>
+<span class="fc" id="L341">            tmf.init(keyStore);</span>
+
+<span class="fc" id="L343">            SSLContext sslContext = SSLContext.getInstance(&quot;SSL&quot;);</span>
+<span class="fc" id="L344">            sslContext.init(null, tmf.getTrustManagers(), new SecureRandom());</span>
+
+<span class="fc" id="L346">            return sslContext;</span>
+<span class="nc" id="L347">        } catch (NoSuchAlgorithmException | KeyStoreException | KeyManagementException ex) {</span>
+<span class="nc" id="L348">            throw new HecException(&quot;error loading KeyStoreManager&quot;, ex);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

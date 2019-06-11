@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Indexer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.hecclient</a> &gt; <span class="el_source">Indexer.java</span></div><h1>Indexer.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.hecclient;
+
+import org.apache.http.Header;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.message.BasicHeader;
+import org.apache.http.protocol.HttpContext;
+import org.apache.http.util.EntityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+
+final class Indexer implements IndexerInf {
+<span class="fc" id="L34">    private static final Logger log = LoggerFactory.getLogger(Indexer.class);</span>
+
+    private CloseableHttpClient httpClient;
+    private HttpContext context;
+    private String baseUrl;
+    private String hecToken;
+    private boolean keepAlive;
+    private HecChannel channel;
+    private Header[] headers;
+    private Poller poller;
+    private long backPressure;
+    private long lastBackPressure;
+<span class="fc" id="L46">    private long backPressureThreshold = 60 * 1000; // 1 min</span>
+
+    // Indexer doesn't own client, ack poller
+<span class="fc" id="L49">    public Indexer(String baseUrl, String hecToken, CloseableHttpClient client, Poller poller) {</span>
+<span class="fc" id="L50">        this.httpClient = client;</span>
+<span class="fc" id="L51">        this.baseUrl = baseUrl;</span>
+<span class="fc" id="L52">        this.hecToken = hecToken;</span>
+<span class="fc" id="L53">        this.poller = poller;</span>
+<span class="fc" id="L54">        this.context = HttpClientContext.create();</span>
+<span class="fc" id="L55">        backPressure = 0;</span>
+
+<span class="fc" id="L57">        channel = new HecChannel(this);</span>
+
+        // Init headers
+<span class="fc" id="L60">        headers = new Header[3];</span>
+<span class="fc" id="L61">        headers[0] = new BasicHeader(&quot;Authorization&quot;, String.format(&quot;Splunk %s&quot;, hecToken));</span>
+<span class="fc" id="L62">        headers[1] = new BasicHeader(&quot;X-Splunk-Request-Channel&quot;, channel.getId());</span>
+
+<span class="fc" id="L64">        keepAlive = false;</span>
+<span class="fc" id="L65">        setKeepAlive(true);</span>
+<span class="fc" id="L66">    }</span>
+
+    public Indexer setBackPressureThreshold(long threshold)  { //seconds
+<span class="fc" id="L69">        backPressureThreshold = threshold;</span>
+<span class="fc" id="L70">        return this;</span>
+    }
+
+    public Indexer setKeepAlive(boolean keepAlive) {
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        if (this.keepAlive == keepAlive) {</span>
+<span class="fc" id="L75">            return this;</span>
+        }
+
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (keepAlive) {</span>
+<span class="fc" id="L79">            headers[2] = new BasicHeader(&quot;Connection&quot;, &quot;Keep-Alive&quot;);</span>
+        } else {
+<span class="fc" id="L81">            headers[2] = new BasicHeader(&quot;Connection&quot;, &quot;close&quot;);</span>
+        }
+<span class="fc" id="L83">        this.keepAlive = keepAlive;</span>
+<span class="fc" id="L84">        return this;</span>
+    }
+
+    public boolean getKeepAlive() {
+<span class="fc" id="L88">        return keepAlive;</span>
+    }
+
+    @Override
+    public Header[] getHeaders() {
+<span class="fc" id="L93">        return headers;</span>
+    }
+
+    public String getToken() {
+<span class="fc" id="L97">        return hecToken;</span>
+    }
+
+    @Override
+    public String getBaseUrl() {
+<span class="fc" id="L102">        return baseUrl;</span>
+    }
+
+    public HecChannel getChannel() {
+<span class="fc" id="L106">        return channel;</span>
+    }
+
+    // this method is multi-thread safe
+    @Override
+    public boolean send(final EventBatch batch) {
+<span class="fc" id="L112">        String endpoint = batch.getRestEndpoint();</span>
+<span class="fc" id="L113">        String url = baseUrl + endpoint;</span>
+<span class="fc" id="L114">        final HttpPost httpPost = new HttpPost(url);</span>
+<span class="fc" id="L115">        httpPost.setHeaders(headers);</span>
+<span class="fc" id="L116">        httpPost.setEntity(batch.getHttpEntity());</span>
+
+        String resp;
+        try {
+<span class="fc" id="L120">            resp = executeHttpRequest(httpPost);</span>
+<span class="fc" id="L121">        } catch (HecException ex) {</span>
+<span class="fc" id="L122">            poller.fail(channel, batch, ex);</span>
+<span class="fc" id="L123">            return false;</span>
+<span class="fc" id="L124">        }</span>
+
+<span class="fc" id="L126">        poller.stickySessionHandler(channel);</span>
+
+        // we are all good
+<span class="fc" id="L129">        poller.add(this.channel, batch, resp);</span>
+<span class="fc" id="L130">        log.debug(&quot;sent {} events to splunk through channel={} indexer={}&quot;, batch.size(), channel.getId(), getBaseUrl());</span>
+
+<span class="fc" id="L132">        return true;</span>
+    }
+
+    // executeHttpRequest is synchronized since there are multi-threads to access the context
+    @Override
+    public synchronized String executeHttpRequest(final HttpUriRequest req) {
+        CloseableHttpResponse resp;
+        try {
+<span class="fc" id="L140">            resp = httpClient.execute(req, context);</span>
+<span class="fc" id="L141">        } catch (Exception ex) {</span>
+<span class="fc" id="L142">            logBackPressure();</span>
+<span class="fc" id="L143">            log.error(&quot;encountered io exception&quot;, ex);</span>
+<span class="fc" id="L144">            throw new HecException(&quot;encountered exception when post data&quot;, ex);</span>
+<span class="fc" id="L145">        }</span>
+
+<span class="fc" id="L147">        return readAndCloseResponse(resp);</span>
+    }
+
+    private String readAndCloseResponse(CloseableHttpResponse resp) {
+        String respPayload;
+<span class="fc" id="L152">        HttpEntity entity = resp.getEntity();</span>
+        try {
+<span class="fc" id="L154">            respPayload = EntityUtils.toString(entity, &quot;utf-8&quot;);</span>
+<span class="fc" id="L155">        } catch (Exception ex) {</span>
+<span class="fc" id="L156">            log.error(&quot;failed to process http response&quot;, ex);</span>
+<span class="fc" id="L157">            throw new HecException(&quot;failed to process http response&quot;, ex);</span>
+        } finally {
+<span class="fc" id="L159">            try {</span>
+<span class="fc" id="L160">                resp.close();</span>
+<span class="pc" id="L161">            } catch (IOException ex) {</span>
+<span class="pc" id="L162">                throw new HecException(&quot;failed to close http response&quot;, ex);</span>
+<span class="fc" id="L163">            }</span>
+        }
+
+//      log.info(&quot;event posting, channel={}, cookies={}, cookies.length={}&quot;, channel, resp.getHeaders(&quot;Set-Cookie&quot;), resp.getHeaders(&quot;Set-Cookie&quot;).length);
+
+<span class="pc bpc" id="L168" title="3 of 4 branches missed.">        if((resp.getHeaders(&quot;Set-Cookie&quot;) != null) &amp;&amp; (resp.getHeaders(&quot;Set-Cookie&quot;).length &gt; 0)) {</span>
+<span class="nc" id="L169">            log.info(&quot;Sticky session expiry detected, will cleanup old channel and its associated batches&quot;);</span>
+<span class="nc" id="L170">            poller.setStickySessionToTrue();</span>
+        }
+
+<span class="fc" id="L173">        int status = resp.getStatusLine().getStatusCode();</span>
+        // FIXME 503 server is busy backpressure
+<span class="fc bfc" id="L175" title="All 4 branches covered.">        if (status != 200 &amp;&amp; status != 201) {</span>
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">            if (status == 503) {</span>
+<span class="fc" id="L177">                logBackPressure();</span>
+            }
+
+<span class="fc" id="L180">            log.error(&quot;failed to post events resp={}, status={}&quot;, respPayload, status);</span>
+<span class="fc" id="L181">            throw new HecException(String.format(&quot;failed to post events resp=%s, status=%d&quot;, respPayload, status));</span>
+        }
+
+<span class="fc" id="L184">        clearBackPressure();</span>
+
+<span class="fc" id="L186">        return respPayload;</span>
+    }
+
+    private void logBackPressure() {
+<span class="fc" id="L190">        backPressure += 1;</span>
+<span class="fc" id="L191">        lastBackPressure = System.currentTimeMillis();</span>
+<span class="fc" id="L192">    }</span>
+
+    private void clearBackPressure() {
+<span class="fc" id="L195">        backPressure = 0;</span>
+<span class="fc" id="L196">        lastBackPressure = 0;</span>
+<span class="fc" id="L197">    }</span>
+
+    @Override
+    public String toString() {
+<span class="fc" id="L201">        return baseUrl;</span>
+    }
+
+    @Override
+    public boolean hasBackPressure() {
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        if (backPressure &gt; 0) {</span>
+<span class="fc bfc" id="L207" title="All 2 branches covered.">            if ((System.currentTimeMillis() - lastBackPressure) &lt; backPressureThreshold) {</span>
+<span class="fc" id="L208">                log.warn(&quot;Still in Backpressure window {}:{}&quot;, System.currentTimeMillis() - lastBackPressure, backPressureThreshold);</span>
+                // still in the back-pressure window
+<span class="fc" id="L210">                return true;</span>
+            } else {
+<span class="fc" id="L212">                log.info(&quot;Clearing Backpressure&quot;);</span>
+<span class="fc" id="L213">                clearBackPressure();</span>
+<span class="fc" id="L214">                return false;</span>
+            }
+        }
+<span class="fc" id="L217">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

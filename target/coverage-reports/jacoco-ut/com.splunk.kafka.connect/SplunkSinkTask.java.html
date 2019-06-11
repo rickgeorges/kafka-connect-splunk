@@ -1,0 +1,505 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SplunkSinkTask.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.kafka.connect</a> &gt; <span class="el_source">SplunkSinkTask.java</span></div><h1>SplunkSinkTask.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.kafka.connect;
+
+import com.splunk.hecclient.*;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.errors.RetriableException;
+import org.apache.kafka.connect.header.Headers;
+import org.apache.kafka.connect.sink.SinkRecord;
+import org.apache.kafka.connect.sink.SinkTask;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.connect.header.Header;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.*;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+<span class="fc" id="L35">public final class SplunkSinkTask extends SinkTask implements PollerCallback {</span>
+<span class="fc" id="L36">    private static final Logger log = LoggerFactory.getLogger(SplunkSinkTask.class);</span>
+    private static final long flushWindow = 30 * 1000; // 30 seconds
+    private static final String HEADERTOKEN = &quot;$$$&quot;;
+
+    private HecInf hec;
+    private KafkaRecordTracker tracker;
+    private SplunkSinkConnectorConfig connectorConfig;
+    private List&lt;SinkRecord&gt; bufferedRecords;
+<span class="fc" id="L44">    private long lastFlushed = System.currentTimeMillis();</span>
+<span class="fc" id="L45">    private long threadId = Thread.currentThread().getId();</span>
+
+    private static final String HOSTNAME;
+    static {
+<span class="fc" id="L49">        String h = null;</span>
+        try {
+<span class="fc" id="L51">            h = InetAddress.getLocalHost().getHostName();</span>
+<span class="nc" id="L52">        } catch (UnknownHostException e) {</span>
+<span class="fc" id="L53">        }</span>
+<span class="fc" id="L54">        HOSTNAME = h;</span>
+<span class="fc" id="L55">    }</span>
+
+    @Override
+    public void start(Map&lt;String, String&gt; taskConfig) {
+<span class="fc" id="L59">        connectorConfig = new SplunkSinkConnectorConfig(taskConfig);</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        if (hec == null) {</span>
+<span class="fc" id="L61">            hec = createHec();</span>
+        }
+<span class="fc" id="L63">        tracker = new KafkaRecordTracker();</span>
+<span class="fc" id="L64">        bufferedRecords = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L66">        log.info(&quot;kafka-connect-splunk task starts with config={}&quot;, connectorConfig);</span>
+<span class="fc" id="L67">    }</span>
+
+    @Override
+    public void put(Collection&lt;SinkRecord&gt; records) {
+<span class="fc" id="L71">        long startTime = System.currentTimeMillis();</span>
+<span class="fc" id="L72">        log.debug(&quot;tid={} received {} records with total {} outstanding events tracked&quot;, threadId, records.size(), tracker.totalEvents());</span>
+
+<span class="fc" id="L74">        handleFailedBatches();</span>
+
+<span class="fc" id="L76">        preventTooManyOutstandingEvents();</span>
+
+<span class="fc" id="L78">        bufferedRecords.addAll(records);</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        if (bufferedRecords.size() &lt; connectorConfig.maxBatchSize) {</span>
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">            if (System.currentTimeMillis() - lastFlushed &lt; flushWindow) {</span>
+<span class="fc" id="L81">                logDuration(startTime);</span>
+                // still in flush window, buffer the records and return
+<span class="fc" id="L83">                return;</span>
+            }
+
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            if (bufferedRecords.isEmpty()) {</span>
+<span class="nc" id="L87">                lastFlushed = System.currentTimeMillis();</span>
+<span class="nc" id="L88">                logDuration(startTime);</span>
+<span class="nc" id="L89">                return;</span>
+            }
+        }
+
+        // either flush window reached or max batch size reached
+<span class="fc" id="L94">        records = bufferedRecords;</span>
+<span class="fc" id="L95">        bufferedRecords = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L96">        lastFlushed = System.currentTimeMillis();</span>
+
+<span class="fc bfc" id="L98" title="All 2 branches covered.">        if (connectorConfig.raw) {</span>
+            /* /raw endpoint */
+<span class="fc" id="L100">            handleRaw(records);</span>
+        } else {
+            /* /event endpoint */
+<span class="fc" id="L103">            handleEvent(records);</span>
+        }
+<span class="fc" id="L105">        logDuration(startTime);</span>
+<span class="fc" id="L106">    }</span>
+
+    private void logDuration(long startTime) {
+<span class="fc" id="L109">        long endTime = System.currentTimeMillis();</span>
+<span class="fc" id="L110">        log.debug(&quot;tid={} cost={} ms&quot;, threadId, endTime - startTime);</span>
+<span class="fc" id="L111">    }</span>
+
+    // for testing hook
+    SplunkSinkTask setHec(final HecInf hec) {
+<span class="fc" id="L115">        this.hec = hec;</span>
+<span class="fc" id="L116">        return this;</span>
+    }
+
+    KafkaRecordTracker getTracker() {
+<span class="fc" id="L120">        return tracker;</span>
+    }
+
+    private void handleFailedBatches() {
+<span class="fc" id="L124">        Collection&lt;EventBatch&gt; failed = tracker.getAndRemoveFailedRecords();</span>
+<span class="fc bfc" id="L125" title="All 2 branches covered.">        if (failed.isEmpty()) {</span>
+<span class="fc" id="L126">            return;</span>
+        }
+
+<span class="fc" id="L129">        log.debug(&quot;handling {} failed batches&quot;, failed.size());</span>
+<span class="fc" id="L130">        long failedEvents = 0;</span>
+        // if there are failed ones, first deal with them
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        for (final EventBatch batch: failed) {</span>
+<span class="fc" id="L133">            failedEvents += batch.size();</span>
+<span class="pc bpc" id="L134" title="3 of 4 branches missed.">            if (connectorConfig.maxRetries &gt; 0 &amp;&amp; batch.getFailureCount() &gt; connectorConfig.maxRetries) {</span>
+<span class="nc" id="L135">                log.error(&quot;dropping EventBatch {} with {} events after reaching maximum retries {}&quot;,</span>
+<span class="nc" id="L136">                           batch.getUUID(), batch.size(), connectorConfig.maxRetries);</span>
+<span class="nc" id="L137">                continue;</span>
+            }
+<span class="fc" id="L139">            log.warn(&quot;attempting to resend batch {} with {} events, this is attempt {} out of {} for this batch &quot;,</span>
+<span class="fc" id="L140">                      batch.getUUID(), batch.size(), batch.getFailureCount(), connectorConfig.maxRetries);</span>
+<span class="fc" id="L141">            send(batch);</span>
+<span class="fc" id="L142">        }</span>
+
+<span class="fc" id="L144">        log.info(&quot;handled {} failed batches with {} events&quot;, failed.size(), failedEvents);</span>
+<span class="pc bpc" id="L145" title="1 of 2 branches missed.">        if (failedEvents * 10 &gt; connectorConfig.maxOutstandingEvents) {</span>
+<span class="fc" id="L146">            String msg = String.format(&quot;failed events have reached 10 %% of max outstanding events %d, pausing the pull of events for a while&quot;, connectorConfig.maxOutstandingEvents);</span>
+<span class="fc" id="L147">            throw new RetriableException(new HecException(msg));</span>
+        }
+<span class="nc" id="L149">    }</span>
+
+    private void preventTooManyOutstandingEvents() {
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        if (tracker.totalEvents() &gt;= connectorConfig.maxOutstandingEvents) {</span>
+<span class="fc" id="L153">            String msg = String.format(&quot;max outstanding events %d have reached, pause the pull for a while&quot;, connectorConfig.maxOutstandingEvents);</span>
+<span class="fc" id="L154">            throw new RetriableException(new HecException(msg));</span>
+        }
+<span class="fc" id="L156">    }</span>
+
+    private void handleRaw(final Collection&lt;SinkRecord&gt; records) {
+<span class="pc bpc" id="L159" title="1 of 2 branches missed.">        if(connectorConfig.headerSupport) {</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if(records != null) { handleRecordsWithHeader(records); }</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        } else if (connectorConfig.hasMetaDataConfigured()) {</span>
+            // when setup metadata - index, source, sourcetype, we need partition records for /raw
+<span class="fc" id="L163">            Map&lt;TopicPartition, Collection&lt;SinkRecord&gt;&gt; partitionedRecords = partitionRecords(records);</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">            for (Map.Entry&lt;TopicPartition, Collection&lt;SinkRecord&gt;&gt; entry: partitionedRecords.entrySet()) {</span>
+<span class="fc" id="L165">                EventBatch batch = createRawEventBatch(entry.getKey());</span>
+<span class="fc" id="L166">                sendEvents(entry.getValue(), batch);</span>
+<span class="fc" id="L167">            }</span>
+<span class="fc" id="L168">        } else {</span>
+<span class="fc" id="L169">            EventBatch batch = createRawEventBatch(null);</span>
+<span class="fc" id="L170">            sendEvents(records, batch);</span>
+        }
+<span class="fc" id="L172">    }</span>
+
+    private void handleRecordsWithHeader(final Collection&lt;SinkRecord&gt; records) {
+<span class="nc" id="L175">        HashMap&lt;String, ArrayList&lt;SinkRecord&gt;&gt; recordsWithSameHeaders = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        for (SinkRecord record : records) {</span>
+<span class="nc" id="L178">            String key = headerId(record);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">            if (!recordsWithSameHeaders.containsKey(key)) {</span>
+<span class="nc" id="L180">                ArrayList&lt;SinkRecord&gt; recordList = new ArrayList&lt;SinkRecord&gt;();</span>
+<span class="nc" id="L181">                recordsWithSameHeaders.put(key, recordList);</span>
+            }
+<span class="nc" id="L183">            ArrayList&lt;SinkRecord&gt; recordList = recordsWithSameHeaders.get(key);</span>
+<span class="nc" id="L184">            recordList.add(record);</span>
+<span class="nc" id="L185">        }</span>
+
+<span class="nc" id="L187">        Iterator&lt;Map.Entry&lt;String, ArrayList&lt;SinkRecord&gt;&gt;&gt; itr = recordsWithSameHeaders.entrySet().iterator();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        while(itr.hasNext()) {</span>
+<span class="nc" id="L189">            Map.Entry&lt;String, ArrayList&lt;SinkRecord&gt;&gt; set = itr.next();</span>
+<span class="nc" id="L190">            String splunkSinkRecordKey = set.getKey();</span>
+<span class="nc" id="L191">            ArrayList&lt;SinkRecord&gt; recordArrayList = set.getValue();</span>
+
+<span class="nc" id="L193">            EventBatch batch = createRawHeaderEventBatch(splunkSinkRecordKey);</span>
+<span class="nc" id="L194">            sendEvents(recordArrayList, batch);</span>
+<span class="nc" id="L195">        }</span>
+<span class="nc" id="L196">        log.debug(&quot;{} records have been bucketed in to {} batches&quot;, records.size(), recordsWithSameHeaders.size());</span>
+<span class="nc" id="L197">    }</span>
+
+    public String headerId(SinkRecord sinkRecord) {
+<span class="nc" id="L200">        Headers headers = sinkRecord.headers();</span>
+
+<span class="nc" id="L202">        Header indexHeader = headers.lastWithName(connectorConfig.headerIndex);</span>
+<span class="nc" id="L203">        Header hostHeader = headers.lastWithName(connectorConfig.headerHost);</span>
+<span class="nc" id="L204">        Header sourceHeader = headers.lastWithName(connectorConfig.headerSource);</span>
+<span class="nc" id="L205">        Header sourcetypeHeader = headers.lastWithName(connectorConfig.headerSourcetype);</span>
+
+<span class="nc" id="L207">        Map&lt;String, String&gt; metas = connectorConfig.topicMetas.get(sinkRecord.topic());</span>
+
+
+<span class="nc" id="L210">        StringBuilder headerString = new StringBuilder();</span>
+
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if(indexHeader != null) {</span>
+<span class="nc" id="L213">            headerString.append(indexHeader.value().toString());</span>
+        } else {
+<span class="nc" id="L215">            headerString.append(metas.get(&quot;index&quot;));</span>
+        }
+
+<span class="nc" id="L218">        headerString.append(insertHeaderToken());</span>
+
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        if(hostHeader != null) {</span>
+<span class="nc" id="L221">            headerString.append(hostHeader.value().toString());</span>
+        } else {
+<span class="nc" id="L223">            headerString.append(&quot;default-host&quot;);</span>
+        }
+
+<span class="nc" id="L226">        headerString.append(insertHeaderToken());</span>
+
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        if(sourceHeader != null) {</span>
+<span class="nc" id="L229">            headerString.append(sourceHeader.value().toString());</span>
+        } else {
+<span class="nc" id="L231">            headerString.append(metas.get(&quot;source&quot;));</span>
+        }
+
+<span class="nc" id="L234">        headerString.append(insertHeaderToken());</span>
+
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if(sourcetypeHeader != null) {</span>
+<span class="nc" id="L237">            headerString.append(sourcetypeHeader.value().toString());</span>
+        } else {
+<span class="nc" id="L239">            headerString.append(metas.get(&quot;sourcetype&quot;));</span>
+        }
+
+<span class="nc" id="L242">        headerString.append(insertHeaderToken());</span>
+
+<span class="nc" id="L244">        return headerString.toString();</span>
+    }
+
+    public String insertHeaderToken() {
+<span class="nc" id="L248">        return HEADERTOKEN;</span>
+    }
+
+    private void handleEvent(final Collection&lt;SinkRecord&gt; records) {
+<span class="fc" id="L252">        EventBatch batch = new JsonEventBatch();</span>
+<span class="fc" id="L253">        sendEvents(records, batch);</span>
+<span class="fc" id="L254">    }</span>
+
+    private void sendEvents(final Collection&lt;SinkRecord&gt; records, EventBatch batch) {
+<span class="fc bfc" id="L257" title="All 2 branches covered.">        for (final SinkRecord record: records) {</span>
+            Event event;
+            try {
+<span class="fc" id="L260">                event = createHecEventFrom(record);</span>
+<span class="fc" id="L261">            } catch (HecException ex) {</span>
+<span class="fc" id="L262">                log.error(&quot;ignore malformed event for topicPartitionOffset=({}, {}, {})&quot;,</span>
+<span class="fc" id="L263">                        record.topic(), record.kafkaPartition(), record.kafkaOffset(), ex);</span>
+<span class="fc" id="L264">                event = createHecEventFromMalformed(record);</span>
+<span class="fc" id="L265">            }</span>
+
+<span class="fc" id="L267">            batch.add(event);</span>
+<span class="fc bfc" id="L268" title="All 2 branches covered.">            if (batch.size() &gt;= connectorConfig.maxBatchSize) {</span>
+<span class="fc" id="L269">                send(batch);</span>
+                // start a new batch after send
+<span class="fc" id="L271">                batch = batch.createFromThis();</span>
+            }
+<span class="fc" id="L273">        }</span>
+
+        // Last batch
+<span class="fc bfc" id="L276" title="All 2 branches covered.">        if (!batch.isEmpty()) {</span>
+<span class="fc" id="L277">            send(batch);</span>
+        }
+<span class="fc" id="L279">    }</span>
+
+    private void send(final EventBatch batch) {
+<span class="fc" id="L282">        batch.resetSendTimestamp();</span>
+<span class="fc" id="L283">        tracker.addEventBatch(batch);</span>
+        try {
+<span class="fc" id="L285">            hec.send(batch);</span>
+<span class="nc" id="L286">        } catch (Exception ex) {</span>
+<span class="nc" id="L287">            batch.fail();</span>
+<span class="nc" id="L288">            onEventFailure(Arrays.asList(batch), ex);</span>
+<span class="nc" id="L289">            log.error(&quot;failed to send batch {}&quot; ,batch.getUUID(), ex);</span>
+<span class="fc" id="L290">        }</span>
+<span class="fc" id="L291">    }</span>
+
+    private EventBatch createRawHeaderEventBatch(String splunkSinkRecord) {
+<span class="nc" id="L294">        String[] split = splunkSinkRecord.split(&quot;[$]{3}&quot;, -1);</span>
+
+<span class="nc" id="L296">        return RawEventBatch.factory()</span>
+<span class="nc" id="L297">                .setIndex(split[0])</span>
+<span class="nc" id="L298">                .setHost(split[1])</span>
+<span class="nc" id="L299">                .setSource(split[2])</span>
+<span class="nc" id="L300">                .setSourcetype(split[3])</span>
+<span class="nc" id="L301">                .build();</span>
+    }
+
+    // setup metadata on RawEventBatch
+    private EventBatch createRawEventBatch(final TopicPartition tp) {
+<span class="fc bfc" id="L306" title="All 2 branches covered.">        if (tp == null) {</span>
+<span class="fc" id="L307">            return RawEventBatch.factory().build();</span>
+        }
+
+<span class="fc" id="L310">        Map&lt;String, String&gt; metas = connectorConfig.topicMetas.get(tp.topic());</span>
+<span class="pc bpc" id="L311" title="2 of 4 branches missed.">        if (metas == null || metas.isEmpty()) {</span>
+<span class="nc" id="L312">            return RawEventBatch.factory().build();</span>
+        }
+
+<span class="fc" id="L315">        return RawEventBatch.factory()</span>
+<span class="fc" id="L316">                .setIndex(metas.get(SplunkSinkConnectorConfig.INDEX))</span>
+<span class="fc" id="L317">                .setSourcetype(metas.get(SplunkSinkConnectorConfig.SOURCETYPE))</span>
+<span class="fc" id="L318">                .setSource(metas.get(SplunkSinkConnectorConfig.SOURCE))</span>
+<span class="fc" id="L319">                .build();</span>
+    }
+
+    @Override
+    public Map&lt;TopicPartition, OffsetAndMetadata&gt; preCommit(Map&lt;TopicPartition, OffsetAndMetadata&gt; meta) {
+        // tell Kafka Connect framework what are offsets we can safely commit to Kafka now
+<span class="fc" id="L325">        Map&lt;TopicPartition, OffsetAndMetadata&gt; offsets = tracker.computeOffsets();</span>
+<span class="fc" id="L326">        log.debug(&quot;commits offsets offered={}, pushed={}&quot;, offsets, meta);</span>
+<span class="fc" id="L327">        return offsets;</span>
+    }
+
+    @Override
+    public void stop() {
+<span class="fc bfc" id="L332" title="All 2 branches covered.">        if (hec != null) {</span>
+<span class="fc" id="L333">            hec.close();</span>
+        }
+<span class="fc" id="L335">        log.info(&quot;kafka-connect-splunk task ends with config={}&quot;, connectorConfig);</span>
+<span class="fc" id="L336">    }</span>
+
+    @Override
+    public String version() {
+<span class="nc" id="L340">        return VersionUtils.getVersionString();</span>
+    }
+
+    public void onEventCommitted(final List&lt;EventBatch&gt; batches) {
+        // for (final EventBatch batch: batches) {
+        // assert batch.isCommitted();
+        // }
+<span class="fc" id="L347">    }</span>
+
+    public void onEventFailure(final List&lt;EventBatch&gt; batches, Exception ex) {
+<span class="fc" id="L350">        log.info(&quot;add {} failed batches&quot;, batches.size());</span>
+<span class="fc bfc" id="L351" title="All 2 branches covered.">        for (EventBatch batch: batches) {</span>
+<span class="fc" id="L352">            tracker.addFailedEventBatch(batch);</span>
+<span class="fc" id="L353">        }</span>
+<span class="fc" id="L354">    }</span>
+
+    private Event createHecEventFrom(final SinkRecord record) {
+<span class="fc bfc" id="L357" title="All 2 branches covered.">        if (connectorConfig.raw) {</span>
+<span class="fc" id="L358">            RawEvent event = new RawEvent(record.value(), record);</span>
+<span class="fc" id="L359">            event.setLineBreaker(connectorConfig.lineBreaker);</span>
+<span class="pc bpc" id="L360" title="1 of 2 branches missed.">            if(connectorConfig.headerSupport) {</span>
+<span class="nc" id="L361">                event = (RawEvent)addHeaders(event, record);</span>
+            }
+<span class="fc" id="L363">            return event;</span>
+        }
+
+        JsonEvent event;
+<span class="fc" id="L367">        ObjectMapper objectMapper = new ObjectMapper();</span>
+
+<span class="pc bpc" id="L369" title="1 of 2 branches missed.">        if(connectorConfig.hecEventFormatted) {</span>
+            try {
+<span class="nc" id="L371">                event = objectMapper.readValue(record.value().toString(), JsonEvent.class);</span>
+<span class="nc" id="L372">                event.addFields(connectorConfig.enrichments);</span>
+<span class="nc" id="L373">            } catch(Exception e) {</span>
+<span class="nc" id="L374">                log.error(&quot;event does not follow correct HEC pre-formatted format: {}&quot;, record.value().toString());</span>
+<span class="nc" id="L375">                event = createHECEventNonFormatted(record);</span>
+<span class="nc" id="L376">            }</span>
+        } else {
+<span class="fc" id="L378">            event = createHECEventNonFormatted(record);</span>
+        }
+
+<span class="pc bpc" id="L381" title="1 of 2 branches missed.">        if(connectorConfig.headerSupport) {</span>
+<span class="nc" id="L382">            addHeaders(event, record);</span>
+        }
+
+<span class="pc bpc" id="L385" title="1 of 2 branches missed.">        if (connectorConfig.trackData) {</span>
+<span class="fc" id="L386">            Map&lt;String, String&gt; trackMetas = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L387">            trackMetas.put(&quot;kafka_offset&quot;, String.valueOf(record.kafkaOffset()));</span>
+<span class="fc" id="L388">            trackMetas.put(&quot;kafka_timestamp&quot;, String.valueOf(record.timestamp()));</span>
+<span class="fc" id="L389">            trackMetas.put(&quot;kafka_topic&quot;, record.topic());</span>
+<span class="fc" id="L390">            trackMetas.put(&quot;kafka_partition&quot;, String.valueOf(record.kafkaPartition()));</span>
+<span class="pc bpc" id="L391" title="1 of 2 branches missed.">            if (HOSTNAME != null)</span>
+<span class="fc" id="L392">                trackMetas.put(&quot;kafka_connect_host&quot;, HOSTNAME);</span>
+<span class="fc" id="L393">            event.addFields(trackMetas);</span>
+        }
+<span class="fc" id="L395">        event.validate();</span>
+
+<span class="fc" id="L397">        return event;</span>
+    }
+
+    private Event addHeaders(Event event, SinkRecord record) {
+<span class="nc" id="L401">        Headers headers = record.headers();</span>
+<span class="nc bnc" id="L402" title="All 4 branches missed.">        if(headers.isEmpty() &amp;&amp;  connectorConfig.headerCustom.isEmpty()) {</span>
+<span class="nc" id="L403">            return event;</span>
+        }
+
+<span class="nc" id="L406">        Header headerIndex = headers.lastWithName(connectorConfig.headerIndex);</span>
+<span class="nc" id="L407">        Header headerHost = headers.lastWithName(connectorConfig.headerHost);</span>
+<span class="nc" id="L408">        Header headerSource = headers.lastWithName(connectorConfig.headerSource);</span>
+<span class="nc" id="L409">        Header headerSourcetype = headers.lastWithName(connectorConfig.headerSourcetype);</span>
+
+<span class="nc bnc" id="L411" title="All 2 branches missed.">        if (headerIndex != null) {</span>
+<span class="nc" id="L412">            event.setIndex(headerIndex.value().toString());</span>
+        }
+<span class="nc bnc" id="L414" title="All 2 branches missed.">        if (headerHost != null) {</span>
+<span class="nc" id="L415">            event.setHost(headerHost.value().toString());</span>
+        }
+<span class="nc bnc" id="L417" title="All 2 branches missed.">        if (headerSource != null) {</span>
+<span class="nc" id="L418">            event.setSource(headerSource.value().toString());</span>
+        }
+<span class="nc bnc" id="L420" title="All 2 branches missed.">        if (headerSourcetype != null) {</span>
+<span class="nc" id="L421">            event.setSourcetype(headerSourcetype.value().toString());</span>
+        }
+
+        // Custom headers are configured with a comma separated list passed in configuration
+        // &quot;custom_header_1,custom_header_2,custom_header_3&quot;
+<span class="nc bnc" id="L426" title="All 2 branches missed.">        if (!connectorConfig.headerCustom.isEmpty()) {</span>
+<span class="nc" id="L427">            String[] customHeaders = connectorConfig.headerCustom.split(&quot;,\\s?&quot;);</span>
+<span class="nc" id="L428">            Map&lt;String, String&gt; headerMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">            for (String header : customHeaders) {</span>
+<span class="nc" id="L430">                    Header customHeader = headers.lastWithName(header);</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">                if (customHeader != null) {</span>
+<span class="nc" id="L432">                    headerMap.put(header, customHeader.value().toString());</span>
+                }
+            }
+<span class="nc" id="L435">            event.addFields(headerMap);</span>
+        }
+<span class="nc" id="L437">        return event;</span>
+    }
+
+    private JsonEvent createHECEventNonFormatted(final SinkRecord record) {
+<span class="fc" id="L441">        JsonEvent event = new JsonEvent(record.value(), record);</span>
+<span class="pc bpc" id="L442" title="2 of 4 branches missed.">        if (connectorConfig.useRecordTimestamp &amp;&amp; record.timestamp() != null) {</span>
+<span class="fc" id="L443">            event.setTime(record.timestamp() / 1000.0); // record timestamp is in milliseconds</span>
+        }
+
+<span class="fc" id="L446">        Map&lt;String, String&gt; metas = connectorConfig.topicMetas.get(record.topic());</span>
+<span class="fc bfc" id="L447" title="All 2 branches covered.">        if (metas != null) {</span>
+<span class="fc" id="L448">            event.setIndex(metas.get(SplunkSinkConnectorConfig.INDEX));</span>
+<span class="fc" id="L449">            event.setSourcetype(metas.get(SplunkSinkConnectorConfig.SOURCETYPE));</span>
+<span class="fc" id="L450">            event.setSource(metas.get(SplunkSinkConnectorConfig.SOURCE));</span>
+<span class="fc" id="L451">            event.addFields(connectorConfig.enrichments);</span>
+        }
+<span class="fc" id="L453">        return event;</span>
+    }
+
+    private Event createHecEventFromMalformed(final SinkRecord record) {
+        Object data;
+<span class="pc bpc" id="L458" title="1 of 2 branches missed.">        if (connectorConfig.raw) {</span>
+<span class="nc" id="L459">            data = &quot;timestamp=&quot; + record.timestamp() + &quot;, topic='&quot; + record.topic() + '\'' +</span>
+<span class="nc" id="L460">                    &quot;, partition=&quot; + record.kafkaPartition() +</span>
+<span class="nc" id="L461">                    &quot;, offset=&quot; + record.kafkaOffset() + &quot;, type=malformed&quot;;</span>
+        } else {
+<span class="fc" id="L463">            Map&lt;String, Object&gt; v = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L464">            v.put(&quot;timestamp&quot;, record.timestamp());</span>
+<span class="fc" id="L465">            v.put(&quot;topic&quot;, record.topic());</span>
+<span class="fc" id="L466">            v.put(&quot;partition&quot;, record.kafkaPartition());</span>
+<span class="fc" id="L467">            v.put(&quot;offset&quot;, record.kafkaOffset());</span>
+<span class="fc" id="L468">            v.put(&quot;type&quot;, &quot;malformed&quot;);</span>
+<span class="fc" id="L469">            data = v;</span>
+        }
+
+<span class="fc" id="L472">        final SinkRecord r = record.newRecord(&quot;malformed&quot;, 0, null, null, null, data, record.timestamp());</span>
+<span class="fc" id="L473">        return createHecEventFrom(r);</span>
+    }
+
+    // partition records according to topic-partition key
+    private Map&lt;TopicPartition, Collection&lt;SinkRecord&gt;&gt; partitionRecords(Collection&lt;SinkRecord&gt; records) {
+<span class="fc" id="L478">        Map&lt;TopicPartition, Collection&lt;SinkRecord&gt;&gt; partitionedRecords = new HashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L480" title="All 2 branches covered.">        for (SinkRecord record: records) {</span>
+<span class="fc" id="L481">            TopicPartition key = new TopicPartition(record.topic(), record.kafkaPartition());</span>
+<span class="fc" id="L482">            Collection&lt;SinkRecord&gt; partitioned = partitionedRecords.get(key);</span>
+<span class="fc bfc" id="L483" title="All 2 branches covered.">            if (partitioned == null) {</span>
+<span class="fc" id="L484">                partitioned = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L485">                partitionedRecords.put(key, partitioned);</span>
+            }
+<span class="fc" id="L487">            partitioned.add(record);</span>
+<span class="fc" id="L488">        }</span>
+<span class="fc" id="L489">        return partitionedRecords;</span>
+    }
+
+    private HecInf createHec() {
+<span class="fc bfc" id="L493" title="All 2 branches covered.">        if (connectorConfig.numberOfThreads &gt; 1) {</span>
+<span class="fc" id="L494">            return new ConcurrentHec(connectorConfig.numberOfThreads, connectorConfig.ack,</span>
+<span class="fc" id="L495">                    connectorConfig.getHecConfig(), this);</span>
+        } else {
+<span class="fc bfc" id="L497" title="All 2 branches covered.">            if (connectorConfig.ack) {</span>
+<span class="fc" id="L498">                return Hec.newHecWithAck(connectorConfig.getHecConfig(), this);</span>
+            } else {
+<span class="fc" id="L500">                return Hec.newHecWithoutAck(connectorConfig.getHecConfig(), this);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

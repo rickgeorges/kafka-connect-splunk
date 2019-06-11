@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>KafkaRecordTracker.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.kafka.connect</a> &gt; <span class="el_source">KafkaRecordTracker.java</span></div><h1>KafkaRecordTracker.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.kafka.connect;
+
+import com.splunk.hecclient.Event;
+import com.splunk.hecclient.EventBatch;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.sink.SinkRecord;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+final class KafkaRecordTracker {
+<span class="fc" id="L31">    private static final Logger log = LoggerFactory.getLogger(SplunkSinkTask.class);</span>
+    private Map&lt;TopicPartition, TreeMap&lt;Long, EventBatch&gt;&gt; all; // TopicPartition + Long offset represents the SinkRecord
+    private long total;
+    private ConcurrentLinkedQueue&lt;EventBatch&gt; failed;
+
+<span class="fc" id="L36">    public KafkaRecordTracker() {</span>
+<span class="fc" id="L37">        all = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L38">        failed = new ConcurrentLinkedQueue&lt;&gt;();</span>
+<span class="fc" id="L39">        total = 0;</span>
+<span class="fc" id="L40">    }</span>
+
+    public void addFailedEventBatch(final EventBatch batch) {
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        if (!batch.isFailed()) {</span>
+<span class="fc" id="L44">            throw new RuntimeException(&quot;event batch was not failed&quot;);</span>
+        }
+<span class="fc" id="L46">        failed.add(batch);</span>
+<span class="fc" id="L47">        log.info(&quot;total failed batches {}&quot;, failed.size());</span>
+<span class="fc" id="L48">    }</span>
+
+    public void addEventBatch(final EventBatch batch) {
+<span class="fc bfc" id="L51" title="All 2 branches covered.">        for (final Event event: batch.getEvents()) {</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">            if (event.getTied() instanceof SinkRecord) {</span>
+<span class="fc" id="L53">                final SinkRecord record = (SinkRecord) event.getTied();</span>
+<span class="fc" id="L54">                TopicPartition tp = new TopicPartition(record.topic(), record.kafkaPartition());</span>
+<span class="fc" id="L55">                TreeMap&lt;Long, EventBatch&gt; tpRecords = all.get(tp);</span>
+<span class="fc bfc" id="L56" title="All 2 branches covered.">                if (tpRecords == null) {</span>
+<span class="fc" id="L57">                    tpRecords = new TreeMap&lt;&gt;();</span>
+<span class="fc" id="L58">                    all.put(tp, tpRecords);</span>
+                }
+
+<span class="fc bfc" id="L61" title="All 2 branches covered.">                if (!tpRecords.containsKey(record.kafkaOffset())) {</span>
+<span class="fc" id="L62">                    tpRecords.put(record.kafkaOffset(), batch);</span>
+<span class="fc" id="L63">                    total += 1;</span>
+                }
+            }
+<span class="fc" id="L66">        }</span>
+<span class="fc" id="L67">    }</span>
+
+    public Collection&lt;EventBatch&gt; getAndRemoveFailedRecords() {
+<span class="fc" id="L70">        Collection&lt;EventBatch&gt; records = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        while (!failed.isEmpty()) {</span>
+<span class="fc" id="L72">            final EventBatch batch = failed.poll();</span>
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">            if (batch != null) {</span>
+<span class="fc" id="L74">                records.add(batch);</span>
+            }
+<span class="fc" id="L76">        }</span>
+<span class="fc" id="L77">        return records;</span>
+    }
+
+    // Loop through all SinkRecords for all topic partitions to
+    // find all lowest consecutive committed offsets, caculate
+    // the topic/partition offsets and then remove them
+    public Map&lt;TopicPartition, OffsetAndMetadata&gt; computeOffsets() {
+<span class="fc" id="L84">        Map&lt;TopicPartition, OffsetAndMetadata&gt; offsets = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        for (Map.Entry&lt;TopicPartition, TreeMap&lt;Long, EventBatch&gt;&gt; entry: all.entrySet()) {</span>
+<span class="fc" id="L86">            long offset = -1;</span>
+<span class="fc" id="L87">            Iterator&lt;Map.Entry&lt;Long, EventBatch&gt;&gt; iter = entry.getValue().entrySet().iterator();</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">            for (; iter.hasNext();) {</span>
+<span class="fc" id="L89">                Map.Entry&lt;Long, EventBatch&gt; e = iter.next();</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">                if (e.getValue().isCommitted()) {</span>
+<span class="fc" id="L91">                    offset = e.getKey();</span>
+<span class="fc" id="L92">                    iter.remove();</span>
+<span class="fc" id="L93">                    total -= 1;</span>
+                } else {
+                    break;
+                }
+<span class="fc" id="L97">            }</span>
+
+<span class="fc bfc" id="L99" title="All 2 branches covered.">            if (offset &gt;= 0) {</span>
+<span class="fc" id="L100">                offsets.put(entry.getKey(), new OffsetAndMetadata(offset + 1));</span>
+            }
+<span class="fc" id="L102">        }</span>
+<span class="fc" id="L103">        return offsets;</span>
+    }
+
+    public long totalEvents() {
+<span class="fc" id="L107">        return total;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

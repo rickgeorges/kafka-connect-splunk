@@ -1,0 +1,417 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SplunkSinkConnectorConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.kafka.connect</a> &gt; <span class="el_source">SplunkSinkConnectorConfig.java</span></div><h1>SplunkSinkConnectorConfig.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.kafka.connect;
+
+import com.splunk.hecclient.HecConfig;
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.connect.sink.SinkConnector;
+import org.apache.kafka.common.config.AbstractConfig;
+import org.apache.kafka.common.config.ConfigDef;
+import org.apache.commons.lang3.StringUtils;
+
+import java.util.*;
+
+public final class SplunkSinkConnectorConfig extends AbstractConfig {
+    // General
+    static final String INDEX = &quot;index&quot;;
+    static final String SOURCE = &quot;source&quot;;
+    static final String SOURCETYPE = &quot;sourcetype&quot;;
+    // Required Parameters
+    static final String URI_CONF = &quot;splunk.hec.uri&quot;;
+    static final String TOKEN_CONF = &quot;splunk.hec.token&quot;;
+    // General Parameters
+    static final String INDEX_CONF = &quot;splunk.indexes&quot;;
+    static final String SOURCE_CONF = &quot;splunk.sources&quot;;
+    static final String SOURCETYPE_CONF = &quot;splunk.sourcetypes&quot;;
+
+    static final String TOTAL_HEC_CHANNEL_CONF = &quot;splunk.hec.total.channels&quot;;
+    static final String MAX_HTTP_CONNECTION_PER_CHANNEL_CONF = &quot;splunk.hec.max.http.connection.per.channel&quot;;
+    static final String MAX_BATCH_SIZE_CONF = &quot;splunk.hec.max.batch.size&quot;; // record count
+    static final String HTTP_KEEPALIVE_CONF = &quot;splunk.hec.http.keepalive&quot;;
+    static final String HEC_THREDS_CONF = &quot;splunk.hec.threads&quot;;
+    static final String SOCKET_TIMEOUT_CONF = &quot;splunk.hec.socket.timeout&quot;; // seconds
+    static final String SSL_VALIDATE_CERTIFICATES_CONF = &quot;splunk.hec.ssl.validate.certs&quot;;
+    // Acknowledgement Parameters
+    // Use Ack
+    static final String ACK_CONF = &quot;splunk.hec.ack.enabled&quot;;
+    static final String ACK_POLL_INTERVAL_CONF = &quot;splunk.hec.ack.poll.interval&quot;; // seconds
+    static final String ACK_POLL_THREADS_CONF = &quot;splunk.hec.ack.poll.threads&quot;;
+    static final String EVENT_TIMEOUT_CONF = &quot;splunk.hec.event.timeout&quot;; // seconds
+    static final String MAX_OUTSTANDING_EVENTS_CONF = &quot;splunk.hec.max.outstanding.events&quot;;
+    static final String MAX_RETRIES_CONF = &quot;splunk.hec.max.retries&quot;;
+    static final String HEC_BACKOFF_PRESSURE_THRESHOLD = &quot;splunk.hec.backoff.threshhold.seconds&quot;;
+    // Endpoint Parameters
+    static final String RAW_CONF = &quot;splunk.hec.raw&quot;;
+    // /raw endpoint only
+    static final String LINE_BREAKER_CONF = &quot;splunk.hec.raw.line.breaker&quot;;
+    // /event endpoint only
+    static final String USE_RECORD_TIMESTAMP_CONF = &quot;splunk.hec.use.record.timestamp&quot;;
+    static final String ENRICHMENT_CONF = &quot;splunk.hec.json.event.enrichment&quot;;
+    static final String TRACK_DATA_CONF = &quot;splunk.hec.track.data&quot;;
+    static final String HEC_EVENT_FORMATTED_CONF = &quot;splunk.hec.json.event.formatted&quot;;
+    // Trust store
+    static final String SSL_TRUSTSTORE_PATH_CONF = &quot;splunk.hec.ssl.trust.store.path&quot;;
+    static final String SSL_TRUSTSTORE_PASSWORD_CONF = &quot;splunk.hec.ssl.trust.store.password&quot;;
+    //Headers
+    static final String HEADER_SUPPORT_CONF = &quot;splunk.header.support&quot;;
+    static final String HEADER_CUSTOM_CONF = &quot;splunk.header.custom&quot;;
+    static final String HEADER_INDEX_CONF = &quot;splunk.header.index&quot;;
+    static final String HEADER_SOURCE_CONF = &quot;splunk.header.source&quot;;
+    static final String HEADER_SOURCETYPE_CONF = &quot;splunk.header.sourcetype&quot;;
+    static final String HEADER_HOST_CONF = &quot;splunk.header.host&quot;;
+
+    // Kafka configuration description strings
+    // Required Parameters
+    static final String URI_DOC = &quot;Splunk HEC URIs. Either a list of FQDNs or IPs of all Splunk indexers, separated &quot;
+            + &quot;with a \&quot;,\&quot;, or a load balancer. The connector will load balance to indexers using &quot;
+            + &quot;round robin. Splunk Connector will round robin to this list of indexers. &quot;
+            + &quot;https://hec1.splunk.com:8088,https://hec2.splunk.com:8088,https://hec3.splunk.com:8088&quot;;
+    static final String TOKEN_DOC = &quot;Splunk Http Event Collector token.&quot;;
+    // General Parameters
+    static final String INDEX_DOC = &quot;Splunk index names for Kafka topic data separated by comma for multiple topics to &quot;
+            + &quot;indexers (\&quot;prod-index1,prod-index2,prod-index3\&quot;).&quot;;
+    static final String SOURCE_DOC = &quot;Splunk event source metadata for Kafka topic data. The same configuration rules &quot;
+            + &quot;as indexes can be applied. If left un-configured, the default source binds to&quot;
+            + &quot; the HEC token. By default, this setting is empty.&quot;;
+    static final String SOURCETYPE_DOC = &quot;Splunk event sourcetype metadata for Kafka topic data. The same configuration &quot;
+            + &quot;rules as indexes can be applied here. If left unconfigured, the default source&quot;
+            + &quot; binds to the HEC token. By default, this setting is empty&quot;
+            + &quot;through to splunk. Only use with JSON Event endpoint&quot;;
+    static final String TOTAL_HEC_CHANNEL_DOC = &quot;Total HEC Channels used to post events to Splunk. When enabling HEC ACK, &quot;
+            + &quot;setting to the same or 2X number of indexers is generally good.&quot;;
+    static final String MAX_HTTP_CONNECTION_PER_CHANNEL_DOC = &quot;Max HTTP connections pooled for one HEC Channel &quot;
+            + &quot;when posting events to Splunk.&quot;;
+    static final String MAX_BATCH_SIZE_DOC = &quot;Maximum batch size when posting events to Splunk. The size is the actual number of &quot;
+            + &quot;Kafka events not the byte size. By default, this is set to 100.&quot;;
+    static final String HTTP_KEEPALIVE_DOC = &quot;Valid settings are true or false. Enables or disables HTTP connection &quot;
+            + &quot;keep-alive. By default, this is set to true&quot;;
+    static final String HEC_THREADS_DOC = &quot;Controls how many threads are spawned to do data injection via HEC in a single &quot;
+            + &quot;connector task. By default, this is set to 1.&quot;;
+    static final String SOCKET_TIMEOUT_DOC = &quot;Max duration in seconds to read / write data to network before internal TCP &quot;
+            + &quot;Socket timeout.By default, this is set to 60 seconds.&quot;;
+    static final String SSL_VALIDATE_CERTIFICATES_DOC = &quot;Valid settings are true or false. Enables or disables HTTPS &quot;
+            + &quot;certification validation. By default, this is set to true.&quot;;
+    // Acknowledgement Parameters
+    // Use Ack
+    static final String ACK_DOC = &quot;Valid settings are true or false. When set to true Splunk Connect for Kafka will &quot;
+            + &quot;poll event ACKs for POST events before check-pointing the Kafka offsets. This is used &quot;
+            + &quot;to prevent data loss, as this setting implements guaranteed delivery. By default, this &quot;
+            + &quot;setting is set to true.&quot;;
+    static final String ACK_POLL_INTERVAL_DOC = &quot;This setting is only applicable when splunk.hec.ack.enabled is set to &quot;
+            + &quot;true. Internally it controls the event ACKs polling interval. By default, &quot;
+            + &quot;this setting is 10 seconds.&quot;;
+    static final String ACK_POLL_THREADS_DOC = &quot;This setting is used for performance tuning and is only applicable when &quot;
+            + &quot;splunk.hec.ack.enabled is set to true. It controls how many threads &quot;
+            + &quot;should be spawned to poll event ACKs. By default, this is set to 1.&quot;;
+    static final String EVENT_TIMEOUT_DOC = &quot;This setting is applicable when splunk.hec.ack.enabled is set to true. &quot;
+            + &quot;When events are POSTed to Splunk and before they are ACKed, this setting &quot;
+            + &quot;determines how long the connector will wait before timing out and resending. &quot;
+            + &quot;By default, this is set to 300 seconds.&quot;;
+    static final String MAX_OUTSTANDING_EVENTS_DOC = &quot;Maximum amount of un-acknowledged events kept in memory by connector. &quot;
+            + &quot;Will trigger back-pressure event to slow collection. By default, this &quot;
+            + &quot;is set to 1000000.&quot;;
+    static final String MAX_RETRIES_DOC = &quot;Number of retries for failed batches before giving up. By default this is set to &quot;
+            + &quot;-1 which will retry indefinitely.&quot;;
+
+    static final String HEC_BACKOFF_PRESSURE_THRESHOLD_DOC = &quot;The amount of time Splunk Connect for Kafka waits on errors &quot;
+            +   &quot;sending events to Splunk to attempt resending it&quot;;
+    // Endpoint Parameters
+    static final String RAW_DOC = &quot;Set to true in order for Splunk software to ingest data using the the /raw HEC &quot;
+            + &quot;endpoint. Default is false, which will use the /event endpoint.&quot;;
+    // /raw endpoint only
+    static final String LINE_BREAKER_DOC = &quot;Only applicable to /raw HEC endpoint. The setting is used to specify a custom &quot;
+            + &quot;line breaker to help Splunk separate the events correctly. Note: For example&quot;
+            + &quot;you can specify \&quot;#####\&quot; as a special line breaker.By default, this setting is &quot;
+            + &quot;empty.&quot;;
+    // /event endpoint only
+    static final String USE_RECORD_TIMESTAMP_DOC = &quot;Valid settings are true or false. When set to `true`, The timestamp &quot;
+            + &quot;is retrieved from the Kafka record and passed to Splunk as a HEC meta-data &quot;
+            + &quot;override. This will index events in Splunk with the record timestamp. By &quot;
+            + &quot;default, this is set to true.&quot;;
+    static final String ENRICHMENT_DOC = &quot;Only applicable to /event HEC endpoint. This setting is used to enrich raw data &quot;
+            + &quot;with extra metadata fields. It contains a list of key value pairs separated by \&quot;,\&quot;.&quot;
+            + &quot; The configured enrichment metadata will be indexed along with raw event data &quot;
+            + &quot;by Splunk software. Note: Data enrichment for /event HEC endpoint is only available &quot;
+            + &quot;in Splunk Enterprise 6.5 and above. By default, this setting is empty.&quot;;
+    static final String TRACK_DATA_DOC = &quot;Valid settings are true or false. When set to true, data loss and data injection &quot;
+            + &quot;latency metadata will be indexed along with raw data. This setting only works in &quot;
+            + &quot;conjunction with /event HEC endpoint (\&quot;splunk.hec.raw\&quot; : \&quot;false\&quot;). By default&quot;
+            + &quot;, this is set to false.&quot;;
+    static final String HEC_EVENT_FORMATTED_DOC = &quot;Ensures events that are pre-formatted into the properly formatted HEC &quot;
+            + &quot;JSON format as per http://dev.splunk.com/view/event-collector/SP-CAAAE6P have meta-data and event data indexed &quot;
+            + &quot;correctly by Splunk.&quot;;
+    // TBD
+    static final String SSL_TRUSTSTORE_PATH_DOC = &quot;Path on the local disk to the certificate trust store.&quot;;
+    static final String SSL_TRUSTSTORE_PASSWORD_DOC = &quot;Password for the trust store.&quot;;
+
+    static final String HEADER_SUPPORT_DOC = &quot;Setting will enable Kafka Record headers to be used for meta data override&quot;;
+    static final String HEADER_CUSTOM_DOC = &quot;Setting will enable look for Record headers with these values and add them&quot;
+            + &quot;to each event if present. Custom headers are configured separated by comma for multiple headers. ex,  (\&quot;custom_header_1,custom_header_2,custom_header_3\&quot;).&quot;;
+    static final String HEADER_INDEX_DOC = &quot;Header to use for Splunk Header Index&quot;;
+    static final String HEADER_SOURCE_DOC = &quot;Header to use for Splunk Header Source&quot;;
+    static final String HEADER_SOURCETYPE_DOC = &quot;Header to use for Splunk Header Sourcetype&quot;;
+    static final String HEADER_HOST_DOC = &quot;Header to use for Splunk Header Host&quot;;
+
+    final String splunkToken;
+    final String splunkURI;
+    final Map&lt;String, Map&lt;String, String&gt;&gt; topicMetas;
+
+    final String indexes;
+    final String sourcetypes;
+    final String sources;
+
+    final int totalHecChannels;
+    final int maxHttpConnPerChannel;
+    final int maxBatchSize;
+    final boolean httpKeepAlive;
+    final int numberOfThreads;
+    final int socketTimeout;
+    final boolean validateCertificates;
+
+    final boolean ack;
+    final int ackPollInterval;
+    final int ackPollThreads;
+    final int eventBatchTimeout;
+    final int maxOutstandingEvents;
+    final int maxRetries;
+    final int backoffThresholdSeconds;
+
+    final boolean raw;
+    final boolean hecEventFormatted;
+
+    final String lineBreaker;
+    final boolean useRecordTimestamp;
+    final Map&lt;String, String&gt; enrichments;
+    final boolean trackData;
+
+    final boolean hasTrustStorePath;
+    final String trustStorePath;
+    final String trustStorePassword;
+
+    final boolean headerSupport;
+    final String headerCustom;
+    final String headerIndex;
+    final String headerSource;
+    final String headerSourcetype;
+    final String headerHost;
+
+    SplunkSinkConnectorConfig(Map&lt;String, String&gt; taskConfig) {
+<span class="fc" id="L212">        super(conf(), taskConfig);</span>
+<span class="fc" id="L213">        splunkToken = getPassword(TOKEN_CONF).value();</span>
+<span class="fc" id="L214">        splunkURI = getString(URI_CONF);</span>
+<span class="fc" id="L215">        raw = getBoolean(RAW_CONF);</span>
+<span class="fc" id="L216">        ack = getBoolean(ACK_CONF);</span>
+<span class="fc" id="L217">        indexes = getString(INDEX_CONF);</span>
+<span class="fc" id="L218">        sourcetypes = getString(SOURCETYPE_CONF);</span>
+<span class="fc" id="L219">        sources = getString(SOURCE_CONF);</span>
+<span class="fc" id="L220">        httpKeepAlive = getBoolean(HTTP_KEEPALIVE_CONF);</span>
+<span class="fc" id="L221">        validateCertificates = getBoolean(SSL_VALIDATE_CERTIFICATES_CONF);</span>
+<span class="fc" id="L222">        trustStorePath = getString(SSL_TRUSTSTORE_PATH_CONF);</span>
+<span class="fc" id="L223">        hasTrustStorePath = StringUtils.isNotBlank(trustStorePath);</span>
+<span class="fc" id="L224">        trustStorePassword = getPassword(SSL_TRUSTSTORE_PASSWORD_CONF).value();</span>
+<span class="fc" id="L225">        eventBatchTimeout = getInt(EVENT_TIMEOUT_CONF);</span>
+<span class="fc" id="L226">        ackPollInterval = getInt(ACK_POLL_INTERVAL_CONF);</span>
+<span class="fc" id="L227">        ackPollThreads = getInt(ACK_POLL_THREADS_CONF);</span>
+<span class="fc" id="L228">        maxHttpConnPerChannel = getInt(MAX_HTTP_CONNECTION_PER_CHANNEL_CONF);</span>
+<span class="fc" id="L229">        totalHecChannels = getInt(TOTAL_HEC_CHANNEL_CONF);</span>
+<span class="fc" id="L230">        socketTimeout = getInt(SOCKET_TIMEOUT_CONF);</span>
+<span class="fc" id="L231">        enrichments = parseEnrichments(getString(ENRICHMENT_CONF));</span>
+<span class="fc" id="L232">        trackData = getBoolean(TRACK_DATA_CONF);</span>
+<span class="fc" id="L233">        useRecordTimestamp = getBoolean(USE_RECORD_TIMESTAMP_CONF);</span>
+<span class="fc" id="L234">        maxBatchSize = getInt(MAX_BATCH_SIZE_CONF);</span>
+<span class="fc" id="L235">        numberOfThreads = getInt(HEC_THREDS_CONF);</span>
+<span class="fc" id="L236">        lineBreaker = getString(LINE_BREAKER_CONF);</span>
+<span class="fc" id="L237">        maxOutstandingEvents = getInt(MAX_OUTSTANDING_EVENTS_CONF);</span>
+<span class="fc" id="L238">        maxRetries = getInt(MAX_RETRIES_CONF);</span>
+<span class="fc" id="L239">        backoffThresholdSeconds = getInt(HEC_BACKOFF_PRESSURE_THRESHOLD);</span>
+<span class="fc" id="L240">        hecEventFormatted = getBoolean(HEC_EVENT_FORMATTED_CONF);</span>
+<span class="fc" id="L241">        topicMetas = initMetaMap(taskConfig);</span>
+<span class="fc" id="L242">        headerSupport = getBoolean(HEADER_SUPPORT_CONF);</span>
+<span class="fc" id="L243">        headerCustom = getString(HEADER_CUSTOM_CONF);</span>
+<span class="fc" id="L244">        headerIndex = getString(HEADER_INDEX_CONF);</span>
+<span class="fc" id="L245">        headerSource = getString(HEADER_SOURCE_CONF);</span>
+<span class="fc" id="L246">        headerSourcetype = getString(HEADER_SOURCETYPE_CONF);</span>
+<span class="fc" id="L247">        headerHost = getString(HEADER_HOST_CONF);</span>
+<span class="fc" id="L248">    }</span>
+
+    public static ConfigDef conf() {
+<span class="fc" id="L251">        return new ConfigDef()</span>
+<span class="fc" id="L252">                .define(TOKEN_CONF, ConfigDef.Type.PASSWORD, ConfigDef.Importance.HIGH, TOKEN_DOC)</span>
+<span class="fc" id="L253">                .define(URI_CONF, ConfigDef.Type.STRING, ConfigDef.Importance.HIGH, URI_DOC)</span>
+<span class="fc" id="L254">                .define(RAW_CONF, ConfigDef.Type.BOOLEAN, false, ConfigDef.Importance.MEDIUM, RAW_DOC)</span>
+<span class="fc" id="L255">                .define(ACK_CONF, ConfigDef.Type.BOOLEAN, false, ConfigDef.Importance.MEDIUM, ACK_DOC)</span>
+<span class="fc" id="L256">                .define(INDEX_CONF, ConfigDef.Type.STRING, &quot;&quot;, ConfigDef.Importance.MEDIUM, INDEX_DOC)</span>
+<span class="fc" id="L257">                .define(SOURCETYPE_CONF, ConfigDef.Type.STRING, &quot;&quot;, ConfigDef.Importance.MEDIUM, SOURCETYPE_DOC)</span>
+<span class="fc" id="L258">                .define(SOURCE_CONF, ConfigDef.Type.STRING, &quot;&quot;, ConfigDef.Importance.MEDIUM, SOURCE_DOC)</span>
+<span class="fc" id="L259">                .define(HTTP_KEEPALIVE_CONF, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.MEDIUM, HTTP_KEEPALIVE_DOC)</span>
+<span class="fc" id="L260">                .define(SSL_VALIDATE_CERTIFICATES_CONF, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.MEDIUM, SSL_VALIDATE_CERTIFICATES_DOC)</span>
+<span class="fc" id="L261">                .define(SSL_TRUSTSTORE_PATH_CONF, ConfigDef.Type.STRING, &quot;&quot;, ConfigDef.Importance.HIGH, SSL_TRUSTSTORE_PATH_DOC)</span>
+<span class="fc" id="L262">                .define(SSL_TRUSTSTORE_PASSWORD_CONF, ConfigDef.Type.PASSWORD, &quot;&quot;, ConfigDef.Importance.HIGH, SSL_TRUSTSTORE_PASSWORD_DOC)</span>
+<span class="fc" id="L263">                .define(EVENT_TIMEOUT_CONF, ConfigDef.Type.INT, 300, ConfigDef.Importance.MEDIUM, EVENT_TIMEOUT_DOC)</span>
+<span class="fc" id="L264">                .define(ACK_POLL_INTERVAL_CONF, ConfigDef.Type.INT, 10, ConfigDef.Importance.MEDIUM, ACK_POLL_INTERVAL_DOC)</span>
+<span class="fc" id="L265">                .define(ACK_POLL_THREADS_CONF, ConfigDef.Type.INT, 2, ConfigDef.Importance.MEDIUM, ACK_POLL_THREADS_DOC)</span>
+<span class="fc" id="L266">                .define(MAX_HTTP_CONNECTION_PER_CHANNEL_CONF, ConfigDef.Type.INT, 2, ConfigDef.Importance.MEDIUM, MAX_HTTP_CONNECTION_PER_CHANNEL_DOC)</span>
+<span class="fc" id="L267">                .define(TOTAL_HEC_CHANNEL_CONF, ConfigDef.Type.INT, 2, ConfigDef.Importance.HIGH, TOTAL_HEC_CHANNEL_DOC)</span>
+<span class="fc" id="L268">                .define(SOCKET_TIMEOUT_CONF, ConfigDef.Type.INT, 60, ConfigDef.Importance.LOW, SOCKET_TIMEOUT_DOC)</span>
+<span class="fc" id="L269">                .define(ENRICHMENT_CONF, ConfigDef.Type.STRING, &quot;&quot;, ConfigDef.Importance.LOW, ENRICHMENT_DOC)</span>
+<span class="fc" id="L270">                .define(TRACK_DATA_CONF, ConfigDef.Type.BOOLEAN, false, ConfigDef.Importance.LOW, TRACK_DATA_DOC)</span>
+<span class="fc" id="L271">                .define(USE_RECORD_TIMESTAMP_CONF, ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.MEDIUM, USE_RECORD_TIMESTAMP_DOC)</span>
+<span class="fc" id="L272">                .define(HEC_THREDS_CONF, ConfigDef.Type.INT, 1, ConfigDef.Importance.LOW, HEC_THREADS_DOC)</span>
+<span class="fc" id="L273">                .define(LINE_BREAKER_CONF, ConfigDef.Type.STRING, &quot;&quot;, ConfigDef.Importance.MEDIUM, LINE_BREAKER_DOC)</span>
+<span class="fc" id="L274">                .define(MAX_OUTSTANDING_EVENTS_CONF, ConfigDef.Type.INT, 1000000, ConfigDef.Importance.MEDIUM, MAX_OUTSTANDING_EVENTS_DOC)</span>
+<span class="fc" id="L275">                .define(MAX_RETRIES_CONF, ConfigDef.Type.INT, -1, ConfigDef.Importance.MEDIUM, MAX_RETRIES_DOC)</span>
+<span class="fc" id="L276">                .define(HEC_BACKOFF_PRESSURE_THRESHOLD, ConfigDef.Type.INT, 60, ConfigDef.Importance.MEDIUM, HEC_BACKOFF_PRESSURE_THRESHOLD_DOC)</span>
+<span class="fc" id="L277">                .define(HEC_EVENT_FORMATTED_CONF, ConfigDef.Type.BOOLEAN, false, ConfigDef.Importance.LOW, HEC_EVENT_FORMATTED_DOC)</span>
+<span class="fc" id="L278">                .define(MAX_BATCH_SIZE_CONF, ConfigDef.Type.INT, 500, ConfigDef.Importance.MEDIUM, MAX_BATCH_SIZE_DOC)</span>
+<span class="fc" id="L279">                .define(HEADER_SUPPORT_CONF, ConfigDef.Type.BOOLEAN, false, ConfigDef.Importance.MEDIUM, HEADER_SUPPORT_DOC)</span>
+<span class="fc" id="L280">                .define(HEADER_CUSTOM_CONF, ConfigDef.Type.STRING, &quot;&quot;, ConfigDef.Importance.MEDIUM, HEADER_CUSTOM_DOC)</span>
+<span class="fc" id="L281">                .define(HEADER_INDEX_CONF, ConfigDef.Type.STRING, &quot;splunk.header.index&quot;, ConfigDef.Importance.MEDIUM, HEADER_INDEX_DOC)</span>
+<span class="fc" id="L282">                .define(HEADER_SOURCE_CONF, ConfigDef.Type.STRING, &quot;splunk.header.source&quot;, ConfigDef.Importance.MEDIUM, HEADER_SOURCE_DOC)</span>
+<span class="fc" id="L283">                .define(HEADER_SOURCETYPE_CONF, ConfigDef.Type.STRING, &quot;splunk.header.sourcetype&quot;, ConfigDef.Importance.MEDIUM, HEADER_SOURCETYPE_DOC)</span>
+<span class="fc" id="L284">                .define(HEADER_HOST_CONF, ConfigDef.Type.STRING, &quot;splunk.header.host&quot;, ConfigDef.Importance.MEDIUM, HEADER_HOST_DOC);</span>
+    }
+    /**
+     Configuration Method to setup all settings related to Splunk HEC Client
+     */
+    public HecConfig getHecConfig() {
+<span class="fc" id="L290">        HecConfig config = new HecConfig(Arrays.asList(splunkURI.split(&quot;,&quot;)), splunkToken);</span>
+<span class="fc bfc" id="L291" title="All 2 branches covered.">        config.setDisableSSLCertVerification(!validateCertificates)</span>
+<span class="fc" id="L292">              .setSocketTimeout(socketTimeout)</span>
+<span class="fc" id="L293">              .setMaxHttpConnectionPerChannel(maxHttpConnPerChannel)</span>
+<span class="fc" id="L294">              .setTotalChannels(totalHecChannels)</span>
+<span class="fc" id="L295">              .setEventBatchTimeout(eventBatchTimeout)</span>
+<span class="fc" id="L296">              .setHttpKeepAlive(httpKeepAlive)</span>
+<span class="fc" id="L297">              .setAckPollInterval(ackPollInterval)</span>
+<span class="fc" id="L298">              .setAckPollThreads(ackPollThreads)</span>
+<span class="fc" id="L299">              .setEnableChannelTracking(trackData)</span>
+<span class="fc" id="L300">              .setBackoffThresholdSeconds(backoffThresholdSeconds)</span>
+<span class="fc" id="L301">              .setTrustStorePath(trustStorePath)</span>
+<span class="fc" id="L302">              .setTrustStorePassword(trustStorePassword)</span>
+<span class="fc" id="L303">              .setHasCustomTrustStore(hasTrustStorePath);</span>
+<span class="fc" id="L304">        return config;</span>
+    }
+
+    public boolean hasMetaDataConfigured() {
+<span class="pc bpc" id="L308" title="2 of 6 branches missed.">        return (indexes != null &amp;&amp; !indexes.isEmpty()</span>
+<span class="pc bpc" id="L309" title="1 of 4 branches missed.">                || (sources != null &amp;&amp; !sources.isEmpty())</span>
+<span class="fc bfc" id="L310" title="All 2 branches covered.">                || (sourcetypes != null &amp;&amp; !sourcetypes.isEmpty()));</span>
+    }
+
+    public String toString() {
+<span class="fc" id="L314">        return &quot;splunkURI:&quot; + splunkURI + &quot;, &quot;</span>
+                + &quot;raw:&quot; + raw + &quot;, &quot;
+                + &quot;ack:&quot; + ack + &quot;, &quot;
+                + &quot;indexes:&quot; + indexes + &quot;, &quot;
+                + &quot;sourcetypes:&quot; + sourcetypes + &quot;, &quot;
+                + &quot;sources:&quot; + sources + &quot;, &quot;
+                + &quot;headerSupport:&quot; + headerSupport + &quot;, &quot;
+                + &quot;headerCustom:&quot; + headerCustom + &quot;, &quot;
+                + &quot;httpKeepAlive:&quot; + httpKeepAlive + &quot;, &quot;
+                + &quot;validateCertificates:&quot; + validateCertificates + &quot;, &quot;
+                + &quot;trustStorePath:&quot; + trustStorePath + &quot;, &quot;
+                + &quot;socketTimeout:&quot; + socketTimeout + &quot;, &quot;
+                + &quot;eventBatchTimeout:&quot; + eventBatchTimeout + &quot;, &quot;
+                + &quot;ackPollInterval:&quot; + ackPollInterval + &quot;, &quot;
+                + &quot;ackPollThreads:&quot; + ackPollThreads + &quot;, &quot;
+                + &quot;maxHttpConnectionPerChannel:&quot; + maxHttpConnPerChannel + &quot;, &quot;
+                + &quot;totalHecChannels:&quot; + totalHecChannels + &quot;, &quot;
+<span class="fc" id="L331">                + &quot;enrichment:&quot; + getString(ENRICHMENT_CONF) + &quot;, &quot;</span>
+                + &quot;maxBatchSize:&quot; + maxBatchSize + &quot;, &quot;
+                + &quot;numberOfThreads:&quot; + numberOfThreads + &quot;, &quot;
+                + &quot;lineBreaker:&quot; + lineBreaker + &quot;, &quot;
+                + &quot;maxOutstandingEvents:&quot; + maxOutstandingEvents + &quot;, &quot;
+                + &quot;maxRetries:&quot; + maxRetries + &quot;, &quot;
+                + &quot;useRecordTimestamp:&quot; + useRecordTimestamp + &quot;, &quot;
+                + &quot;hecEventFormatted:&quot; + hecEventFormatted + &quot;, &quot;
+                + &quot;trackData:&quot; + trackData + &quot;, &quot;
+                + &quot;headerSupport:&quot; + headerSupport + &quot;, &quot;
+                + &quot;headerCustom:&quot; + headerCustom + &quot;, &quot;
+                + &quot;headerIndex:&quot; + headerIndex + &quot;, &quot;
+                + &quot;headerSource:&quot; + headerSource + &quot;, &quot;
+                + &quot;headerSourcetype:&quot; + headerSourcetype + &quot;, &quot;
+                + &quot;headerHost:&quot; + headerHost;
+    }
+
+    private static String[] split(String data, String sep) {
+<span class="fc bfc" id="L349" title="All 4 branches covered.">        if (data != null &amp;&amp; !data.trim().isEmpty()) {</span>
+<span class="fc" id="L350">            return data.trim().split(sep);</span>
+        }
+<span class="fc" id="L352">        return null;</span>
+    }
+
+    private static Map&lt;String, String&gt; parseEnrichments(String enrichment) {
+<span class="fc" id="L356">        String[] kvs = split(enrichment, &quot;,&quot;);</span>
+<span class="fc bfc" id="L357" title="All 2 branches covered.">        if (kvs == null) {</span>
+<span class="fc" id="L358">            return null;</span>
+        }
+
+<span class="fc" id="L361">        Map&lt;String, String&gt; enrichmentKvs = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L362" title="All 2 branches covered.">        for (final String kv: kvs) {</span>
+<span class="fc" id="L363">            String[] kvPairs = split(kv, &quot;=&quot;);</span>
+<span class="fc bfc" id="L364" title="All 2 branches covered.">            if (kvPairs.length != 2) {</span>
+<span class="fc" id="L365">                throw new ConfigException(&quot;Invalid enrichment: &quot; + enrichment+ &quot;. Expect key value pairs and separated by comma&quot;);</span>
+            }
+<span class="fc" id="L367">            enrichmentKvs.put(kvPairs[0], kvPairs[1]);</span>
+        }
+<span class="fc" id="L369">        return enrichmentKvs;</span>
+    }
+
+    private String getMetaForTopic(String[] metas, int expectedLength, int curIdx, String confKey) {
+<span class="fc bfc" id="L373" title="All 2 branches covered.">        if (metas == null) {</span>
+<span class="fc" id="L374">            return null;</span>
+        }
+
+<span class="fc bfc" id="L377" title="All 2 branches covered.">        if (metas.length == 1) {</span>
+<span class="fc" id="L378">            return metas[0];</span>
+<span class="fc bfc" id="L379" title="All 2 branches covered.">        } else if (metas.length == expectedLength) {</span>
+<span class="fc" id="L380">            return metas[curIdx];</span>
+        } else {
+<span class="fc" id="L382">            throw new ConfigException(&quot;Invalid &quot; + confKey + &quot; configuration=&quot; + metas);</span>
+        }
+    }
+
+    private Map&lt;String, Map&lt;String, String&gt;&gt; initMetaMap(Map&lt;String, String&gt; taskConfig) {
+<span class="fc" id="L387">        String[] topics = split(taskConfig.get(SinkConnector.TOPICS_CONFIG), &quot;,&quot;);</span>
+<span class="fc" id="L388">        String[] topicIndexes = split(indexes, &quot;,&quot;);</span>
+<span class="fc" id="L389">        String[] topicSourcetypes = split(sourcetypes, &quot;,&quot;);</span>
+<span class="fc" id="L390">        String[] topicSources = split(sources, &quot;,&quot;);</span>
+
+<span class="fc" id="L392">        Map&lt;String, Map&lt;String, String&gt;&gt; metaMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L393">        int idx = 0;</span>
+<span class="fc bfc" id="L394" title="All 2 branches covered.">        for (String topic: topics) {</span>
+<span class="fc" id="L395">            HashMap&lt;String, String&gt; topicMeta = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L396">            String meta = getMetaForTopic(topicIndexes, topics.length, idx, INDEX_CONF);</span>
+<span class="fc bfc" id="L397" title="All 2 branches covered.">            if (meta != null) {</span>
+<span class="fc" id="L398">                topicMeta.put(INDEX, meta);</span>
+            }
+
+<span class="fc" id="L401">            meta = getMetaForTopic(topicSourcetypes, topics.length, idx, SOURCETYPE_CONF);</span>
+<span class="fc bfc" id="L402" title="All 2 branches covered.">            if (meta != null) {</span>
+<span class="fc" id="L403">                topicMeta.put(SOURCETYPE, meta);</span>
+            }
+
+<span class="fc" id="L406">            meta = getMetaForTopic(topicSources, topics.length, idx, SOURCE_CONF);</span>
+<span class="fc bfc" id="L407" title="All 2 branches covered.">            if (meta != null) {</span>
+<span class="fc" id="L408">                topicMeta.put(SOURCE, meta);</span>
+            }
+
+<span class="fc" id="L411">            metaMap.put(topic, topicMeta);</span>
+<span class="fc" id="L412">            idx += 1;</span>
+        }
+<span class="fc" id="L414">        return metaMap;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

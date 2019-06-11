@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Event.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.hecclient</a> &gt; <span class="el_source">Event.java</span></div><h1>Event.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.hecclient;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.util.StdDateFormat;
+import org.slf4j.*;
+
+import java.io.*;
+import java.util.Map;
+
+/**
+ * Event is an abstract class that represents a bare bones implementation of a Splunk Event. Every event that arrives
+ * in Splunk must have a time, host, index, source and sourcetype. Event is extended by the JsonEvent and RawEvent
+ * classes which are used depending on which Splunk HEC endpoint will be used when sending events to Splunk.
+ * &lt;p&gt;
+ * This class contains getter and setter methods with a few convenience functions such as validation and Input and
+ * Output stream creation.
+ *
+ * @version     1.0.0
+ * @since       1.0.0
+ */
+@JsonInclude(JsonInclude.Include.NON_EMPTY)
+public abstract class Event {
+    static final String TIME = &quot;time&quot;;
+    static final String HOST = &quot;host&quot;;
+    static final String INDEX = &quot;index&quot;;
+    static final String SOURCE = &quot;source&quot;;
+    static final String SOURCETYPE = &quot;sourcetype&quot;;
+
+    static final ObjectMapper jsonMapper;
+    static {
+<span class="fc" id="L49">        jsonMapper = new ObjectMapper();</span>
+<span class="fc" id="L50">        jsonMapper.registerModule(new com.splunk.kafka.connect.JacksonStructModule());</span>
+<span class="fc" id="L51">        jsonMapper.setDateFormat(StdDateFormat.instance);</span>
+    }
+
+<span class="fc" id="L54">    protected static final Logger log = LoggerFactory.getLogger(Event.class);</span>
+
+<span class="fc" id="L56">    @JsonSerialize(using = DoubleSerializer.class)</span>
+    protected Double time = null; // epoch seconds.milliseconds
+
+    protected String source;
+    protected String sourcetype;
+    protected String host;
+    protected String index;
+    protected Object event;
+
+<span class="fc" id="L65">    @JsonIgnore</span>
+    protected String lineBreaker = &quot;\n&quot;;
+
+    @JsonIgnore
+    protected byte[] bytes; // populated once, use forever until invalidate
+
+    @JsonIgnore
+    private Object tied; // attached object
+
+    /**
+     * Creates a new event.
+     *
+     * @param eventData  Object representation of the event itself without all the extras. Event Data Only
+     * @param tiedObj    Object representation of the entire Record being constructed into an Event.
+     *
+     *
+     * @since           1.0.0
+     * @see JsonEvent
+     * @see RawEvent
+     */
+<span class="fc" id="L85">    public Event(Object eventData, Object tiedObj) {</span>
+<span class="fc" id="L86">        checkEventData(eventData);</span>
+
+<span class="fc" id="L88">        event = eventData;</span>
+<span class="fc" id="L89">        tied = tiedObj;</span>
+<span class="fc" id="L90">    }</span>
+
+    /**
+     * Creates a new event with default values. Implemented for JSON deserialization.
+     *
+     * @since   1.0.0
+     * @see     JsonEvent
+     * @see     RawEvent
+     */
+<span class="fc" id="L99">    Event() {</span>
+<span class="fc" id="L100">    }</span>
+
+    /**
+     * Event is the data portion of the Event Record. Data passed in is validated to be an acceptable String and the byte[]
+     * representation of the Event is cleared as the Event representation has changed.
+     *
+     * @param  data  Object representation of the event itself without all the extras. Event Data Only
+     * @return       Current representation of Event.
+     * @see          Event
+     * @since        1.0.0
+     */
+
+    public final Event setEvent(final Object data) {
+<span class="fc" id="L113">        checkEventData(data);</span>
+<span class="fc" id="L114">        event = data;</span>
+<span class="fc" id="L115">        invalidate();</span>
+<span class="fc" id="L116">        return this;</span>
+    }
+
+    /**
+     * Tied is the full Record Object with associated meta-data.
+     *
+     * @param tied   Object representation of the event with associated meta-data.
+     * @return       Current representation of Event.
+     * @see          Event
+     * @since        1.0.0
+     */
+    public final Event setTied(final Object tied) {
+<span class="fc" id="L128">        this.tied = tied;</span>
+<span class="fc" id="L129">        return this;</span>
+    }
+
+    /**
+     * Time is the Long representation of the event time in epoch format. This is to be later used as the time field in
+     * an indexed Splunk Event.
+     *
+     * @param etime Double representation of the record event in time.seconds.milliseconds
+     * @return      Current representation of Event.
+     * @see         Event
+     * @since       1.0.0
+     */
+    public final Event setTime(final double etime /* seconds.milliseconds */) {
+<span class="fc" id="L142">        this.time = etime;</span>
+<span class="fc" id="L143">        invalidate();</span>
+<span class="fc" id="L144">        return this;</span>
+    }
+
+    /**
+     * Source is the default field used within an indexed Splunk event. The source of an event is the name of the file, stream
+     * or other input from which the event originates
+     *
+     * @param source String representation of the record event source.
+     * @return       Current representation of Event.
+     * @see          Event
+     * @since        1.0.0
+     */
+    public final Event setSource(final String source) {
+<span class="fc" id="L157">        this.source = source;</span>
+<span class="fc" id="L158">        invalidate();</span>
+<span class="fc" id="L159">        return this;</span>
+    }
+
+    /**
+     * Sourcetype is the default field used within an indexed Splunk event. The source type of an event is the format
+     * of the data input from which it originates.The source type determines how your data is to be formatted.
+     *
+     * @param sourcetype String representation of the record event sourcetype.
+     * @return           Current representation of Event.
+     * @see              Event
+     * @since            1.0.0
+     */
+    public final Event setSourcetype(final String sourcetype) {
+<span class="fc" id="L172">        this.sourcetype = sourcetype;</span>
+<span class="fc" id="L173">        invalidate();</span>
+<span class="fc" id="L174">        return this;</span>
+    }
+
+    /**
+     * Host is the default field used within an indexed Splunk event. An event host value is typically the hostname,
+     * IP address, or fully qualified domain name of the network host from which the event originated. The host value
+     * lets you locate data originating from a specific device.
+     *
+     * @param host String representation of the host machine which generated the event.
+     * @return     Current representation of Event.
+     * @see        Event
+     * @since      1.0.0
+     */
+    public final Event setHost(final String host) {
+<span class="fc" id="L188">        this.host = host;</span>
+<span class="fc" id="L189">        invalidate();</span>
+<span class="fc" id="L190">        return this;</span>
+    }
+
+    /**
+     * Index is a required field used to send an event to particular &lt;a href=http://docs.splunk.com/Documentation/Splunk/7.0.0/Indexer/Aboutindexesandindexers&gt;Splunk Index&lt;/&gt;.
+     *
+     * @param index String representation of the Splunk index
+     * @return      Current representation of Event.
+     * @see         Event
+     * @since       1.0.0
+     */
+    public final Event setIndex(final String index) {
+<span class="fc" id="L202">        this.index = index;</span>
+<span class="fc" id="L203">        invalidate();</span>
+<span class="fc" id="L204">        return this;</span>
+    }
+
+    public final Double getTime() {
+<span class="fc" id="L208">        return time;</span>
+    }
+
+    public final String getSource() {
+<span class="fc" id="L212">        return source;</span>
+    }
+
+    public final String getSourcetype() {
+<span class="fc" id="L216">        return sourcetype;</span>
+    }
+
+    public final String getHost() {
+<span class="fc" id="L220">        return host;</span>
+    }
+
+    public final String getIndex() {
+<span class="fc" id="L224">        return index;</span>
+    }
+
+    public final Object getEvent() {
+<span class="fc" id="L228">        return event;</span>
+    }
+
+    public final String getLineBreaker() {
+<span class="nc" id="L232">        return lineBreaker;</span>
+    }
+
+    public final Object getTied() {
+<span class="fc" id="L236">        return tied;</span>
+    }
+
+    public Event addFields(final Map&lt;String, String&gt; fields) {
+<span class="fc" id="L240">        return this;</span>
+    }
+
+    public Event setFields(final Map&lt;String, String&gt; fields) {
+<span class="fc" id="L244">        return this;</span>
+    }
+
+    public Map&lt;String, String&gt; getFields() {
+<span class="fc" id="L248">        return null;</span>
+    }
+
+    /**
+     * Will calculate and return the amount of bytes as an integer of the data and linebreak combined. Used in batch
+     * classes to calculate the total length of a batch to fulfil interface requirements of org.apache.http.HttpEntity
+     *
+     * @return  the total number of bytes of the eventEvent
+     * @see     org.apache.http.HttpEntity
+     * @since   1.0.0
+     */
+    public final int length() {
+<span class="fc" id="L260">        byte[] data = getBytes();</span>
+<span class="fc" id="L261">        return data.length + lineBreaker.getBytes().length;</span>
+    }
+
+    /**
+     * Creates a concatenated InputStream buffered with event data and linebreak data. Linebreak is inserted to avoid
+     * &quot;copying&quot; the event.
+     *
+     * @return  An InputStream which has buffered the Event data, and linebreak data in bytes.
+     *
+     * @see     java.io.InputStream
+     * @see     java.io.SequenceInputStream
+     * @since   1.0.0
+     */
+    @JsonIgnore
+    public final InputStream getInputStream() {
+<span class="fc" id="L276">        byte[] data = getBytes();</span>
+<span class="fc" id="L277">        InputStream eventStream = new ByteArrayInputStream(data);</span>
+
+        // avoid copying the event
+<span class="fc" id="L280">        InputStream carriageReturnStream = new ByteArrayInputStream(lineBreaker.getBytes());</span>
+<span class="fc" id="L281">        return new SequenceInputStream(eventStream, carriageReturnStream);</span>
+    }
+
+    /**
+     * Retrieves byte representation of Event's extended classes JsonEvent and RawEvent and writes bytes to OutputStream
+     * provided as a parameter. After the Event is written to stream a linebreak is also written to separate events.
+     *
+     * @param out OutputStream to write byte representation of Event(JSONEvent, RawEvent) to.
+     *
+     * @throws  IOException
+     * @see     java.io.OutputStream
+     * @since   1.0.0
+     */
+    public final void writeTo(OutputStream out) throws IOException {
+<span class="fc" id="L295">        byte[] data = getBytes();</span>
+<span class="fc" id="L296">        out.write(data);</span>
+
+        // append line breaker
+<span class="fc" id="L299">        byte[] breaker = lineBreaker.getBytes();</span>
+<span class="fc" id="L300">        out.write(breaker);</span>
+<span class="fc" id="L301">    }</span>
+
+    /**
+     * Will attempt to convert current Event into bytes and raise an HECException on issue. This will most likely occur
+     * if JSON Marshalling fails on an invalid JSON representation of an event. getBytes() is implemented within the
+     * extended Event classes JSONEvent and RawEvent. Nothing will happen on a successful validation.
+     *
+     * @throws  HecException
+     * @see     JsonEvent
+     * @see     RawEvent
+     * @since   1.0.0
+     */
+    public void validate() throws HecException {
+<span class="fc" id="L314">        getBytes();</span>
+<span class="fc" id="L315">    }</span>
+
+    /**
+     * On changes to an Events host, index, source, sourcetype and time the event is invalidated by setting bytes
+     * to null.
+     *
+     * @since   1.0.0
+     */
+    public void invalidate() {
+<span class="fc" id="L324">        bytes = null;</span>
+<span class="fc" id="L325">    }</span>
+
+    /**
+     * Will return a byteArray representing of the JsonEvent or RawEvent classes. These classes use Jackson Annotations
+     * and the Jackson ObjectMapper to achieve this.
+     *
+     * @see     HecException
+     * @see     JsonEvent
+     * @see     RawEvent
+     * @since   1.0.0
+     */
+    public abstract byte[] getBytes() throws HecException;
+
+    /**
+     * Static helper function looking for null or empty events. On finding one of these failure conditions a
+     * HECException is thrown.
+     *
+     * @throws  HecException
+     * @since   1.0.0
+     */
+    private static void checkEventData(Object eventData) {
+<span class="fc bfc" id="L346" title="All 2 branches covered.">        if (eventData == null) {</span>
+<span class="fc" id="L347">            throw new HecNullEventException(&quot;Null data for event&quot;);</span>
+        }
+<span class="fc bfc" id="L349" title="All 2 branches covered.">        if (eventData instanceof String) {</span>
+<span class="fc bfc" id="L350" title="All 2 branches covered.">            if (((String) eventData).isEmpty()) {</span>
+<span class="fc" id="L351">                throw new HecEmptyEventException(&quot;Empty event&quot;);</span>
+            }
+        }
+<span class="fc" id="L354">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

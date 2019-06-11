@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VersionUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.kafka.connect</a> &gt; <span class="el_source">VersionUtils.java</span></div><h1>VersionUtils.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.kafka.connect;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+<span class="nc" id="L28">public final class VersionUtils {</span>
+    private static final String VERSION_PROPERTIES_FILE = &quot;/version.properties&quot;;
+    private static final String DEFAULT_VERSION = &quot;dev&quot;;
+<span class="fc" id="L31">    private static final Logger log = LoggerFactory.getLogger(VersionUtils.class);</span>
+
+    /**
+     * Returns the version string that is set in the version.properties
+     * resource file
+     *
+     * @return version string
+    */
+    public static String getVersionString() {
+<span class="nc" id="L40">        List&lt;String&gt; properties = readVersionProperties();</span>
+
+<span class="nc" id="L42">        return getVersionFromProperties(properties);</span>
+    }
+
+    /**
+     * Returns the version string gets from the list of properties.
+     * If version string does not exist, returns the default version.
+     *
+     * @param properties list of git properties
+     * @return           the version string
+    */
+    public static String getVersionFromProperties(List&lt;String&gt; properties) {
+<span class="fc" id="L53">        String versionStr = DEFAULT_VERSION;</span>
+
+<span class="fc bfc" id="L55" title="All 2 branches covered.">        if (properties == null) {</span>
+<span class="fc" id="L56">            return versionStr;</span>
+        }
+
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        for (String item : properties) {</span>
+<span class="fc" id="L60">            String[] res = item.split(&quot;gitversion=&quot;);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">            if (res.length &gt; 1) {</span>
+<span class="fc" id="L62">                versionStr = res[1].trim();</span>
+<span class="fc" id="L63">                log.debug(&quot;found git version string={} in version.properties file&quot;, versionStr);</span>
+<span class="fc" id="L64">                break;</span>
+            }
+<span class="fc" id="L66">        }</span>
+
+<span class="fc" id="L68">        return versionStr;</span>
+    }
+
+    /**
+     * Returns a list of properties by reading version properties file
+     *
+     * @return list of properties
+    */
+    public static List&lt;String&gt; readVersionProperties() {
+<span class="nc" id="L77">        return readResourceFile(VERSION_PROPERTIES_FILE);</span>
+    }
+
+    /**
+     * Returns a list of properties by reading given resource file
+     * Each line in the file is an item of the list
+     * 
+     * @param resourceFileName name of the resource file
+     * @return                 list of properties
+    */
+    public static List&lt;String&gt; readResourceFile(String resourceFileName) {
+<span class="fc" id="L88">        List&lt;String&gt; properties = new ArrayList&lt;&gt;();</span>
+
+        try {
+<span class="fc" id="L91">            InputStream in = VersionUtils.class.getResourceAsStream(resourceFileName);</span>
+
+            // if the resource file can't be found, return an empty list
+<span class="fc bfc" id="L94" title="All 2 branches covered.">            if (in == null) {</span>
+<span class="fc" id="L95">                return properties;</span>
+            }
+
+<span class="fc" id="L98">            BufferedReader reader = new BufferedReader(new InputStreamReader(in));</span>
+            String line;
+
+<span class="fc bfc" id="L101" title="All 2 branches covered.">            while ((line = reader.readLine()) != null) {</span>
+<span class="fc" id="L102">                properties.add(line);</span>
+            }
+
+            // close the BufferedReader when we're done
+<span class="fc" id="L106">            reader.close();</span>
+<span class="nc" id="L107">        } catch (IOException ex) {</span>
+<span class="nc" id="L108">            log.error(&quot;Failed to read properties file {}.&quot;, VERSION_PROPERTIES_FILE, ex);</span>
+<span class="nc" id="L109">            return properties;</span>
+<span class="fc" id="L110">        }</span>
+
+<span class="fc" id="L112">        return properties;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

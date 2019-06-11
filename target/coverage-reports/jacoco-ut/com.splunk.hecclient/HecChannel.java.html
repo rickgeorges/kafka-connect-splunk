@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HecChannel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.hecclient</a> &gt; <span class="el_source">HecChannel.java</span></div><h1>HecChannel.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.hecclient;
+
+import org.apache.http.client.methods.HttpUriRequest;
+
+import java.util.HashMap;
+import java.util.Map;
+
+final class HecChannel {
+    private String id;
+    private Map&lt;String, String&gt; chField;
+    private IndexerInf indexer;
+    private boolean isAvailable;
+
+<span class="fc" id="L29">    public HecChannel(IndexerInf idx) {</span>
+<span class="fc" id="L30">        id = newChannelId();</span>
+<span class="fc" id="L31">        indexer = idx;</span>
+<span class="fc" id="L32">        isAvailable = true;</span>
+<span class="fc" id="L33">    }</span>
+
+    public IndexerInf getIndexer() {
+<span class="fc" id="L36">        return indexer;</span>
+    }
+
+    public String getId() {
+<span class="fc" id="L40">        return id;</span>
+    }
+
+    public HecChannel setTracking(boolean trackChannel) {
+<span class="fc bfc" id="L44" title="All 2 branches covered.">        if (trackChannel) {</span>
+<span class="fc" id="L45">            enableTracking();</span>
+        } else {
+<span class="fc" id="L47">            disableTracking();</span>
+        }
+
+<span class="fc" id="L50">        return this;</span>
+    }
+
+<span class="fc" id="L53">    public void setId() { id = newChannelId(); }</span>
+
+<span class="fc" id="L55">    public void setAvailable(boolean isAvailable) { this.isAvailable = isAvailable; }</span>
+
+    public void send(final EventBatch batch) {
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        if (chField != null) {</span>
+<span class="fc" id="L59">            batch.addExtraFields(chField);</span>
+        }
+<span class="fc" id="L61">        indexer.send(batch);</span>
+<span class="fc" id="L62">    }</span>
+
+    // for convenience
+    public String executeHttpRequest(final HttpUriRequest req) {
+<span class="fc" id="L66">        return indexer.executeHttpRequest(req);</span>
+    }
+
+<span class="fc" id="L69">    public boolean hasBackPressure() { return indexer.hasBackPressure(); }</span>
+
+<span class="fc bfc" id="L71" title="All 2 branches covered.">    public boolean isNotAvailable() { return isAvailable == false; }</span>
+
+    @Override
+    public boolean equals(Object obj) {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (obj == null) {</span>
+<span class="fc" id="L76">            return false;</span>
+        }
+
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        if (obj instanceof HecChannel) {</span>
+<span class="fc" id="L80">            HecChannel ch = (HecChannel) obj;</span>
+<span class="fc" id="L81">            return id.equals(ch.getId());</span>
+        }
+<span class="fc" id="L83">        return false;</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L88">        return id.hashCode();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="fc" id="L93">        return id;</span>
+    }
+
+    private HecChannel enableTracking() {
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (chField == null) {</span>
+<span class="fc" id="L98">            chField = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L99">            chField.put(&quot;hec-channel&quot;, id);</span>
+        }
+<span class="fc" id="L101">        return this;</span>
+    }
+
+    private HecChannel disableTracking() {
+<span class="fc" id="L105">        chField = null;</span>
+<span class="fc" id="L106">        return this;</span>
+    }
+
+    private static String newChannelId() {
+<span class="fc" id="L110">        return java.util.UUID.randomUUID().toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>

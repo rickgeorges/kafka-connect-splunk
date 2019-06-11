@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RawEvent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">splunk-kafka-connect</a> &gt; <a href="index.source.html" class="el_package">com.splunk.hecclient</a> &gt; <span class="el_source">RawEvent.java</span></div><h1>RawEvent.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2017 Splunk, Inc..
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.splunk.hecclient;
+
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
+
+/**
+ *  RawEvent is used as the Object to represented Splunk events when the /services/collector/raw HEC endpoint is to be
+ *  used for Splunk ingestion.
+ * &lt;p&gt;
+ * This class contains overridden methods from Event which will allow serialization of the RawEvent object into a
+ * String or byte array.
+ * @see         Event
+ * @version     1.0
+ * @since       1.0
+ */
+public final class RawEvent extends Event {
+    public RawEvent(Object data, Object tied) {
+<span class="fc" id="L33">        super(data, tied);</span>
+        // by default disable carriage return line breaker
+<span class="fc" id="L35">        setLineBreaker(&quot;&quot;);</span>
+<span class="fc" id="L36">    }</span>
+
+    /**
+     * Checks to see if a byte representation of RawEvent has already been calculated. If so this value is returned.
+     * Next a serious of type comparison checks to determinate the format type of data that was used to create the raw
+     * event. If its a String, convert to bytes. if its already of a byte array type, return a byte array. Finally if
+     * we slip to the final conditional we assume the data is in json format. the json event is then converted to bytes.
+     *
+     * @return  Serialized byte array representation of RawEvent including all variables in superclass Event. Will return the
+     * value already contained in bytes if it is not null for the Event.
+     *
+     * @throws  HecException
+     * @see     com.fasterxml.jackson.databind.ObjectMapper
+     * @since   1.0
+     */
+
+    @Override
+    public byte[] getBytes() {
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (bytes != null) {</span>
+<span class="fc" id="L55">            return bytes;</span>
+        }
+
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        if (event instanceof String) {</span>
+<span class="fc" id="L59">            String s = (String) event;</span>
+<span class="fc" id="L60">            bytes = s.getBytes(StandardCharsets.UTF_8);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        } else if (event instanceof byte[]) {</span>
+<span class="fc" id="L62">            bytes = (byte[]) event;</span>
+        } else {
+            // JSON object
+            try {
+<span class="fc" id="L66">                bytes = jsonMapper.writeValueAsBytes(event);</span>
+<span class="nc" id="L67">            } catch (Exception ex) {</span>
+<span class="nc" id="L68">                log.error(&quot;Invalid json data&quot;, ex);</span>
+<span class="nc" id="L69">                throw new HecException(&quot;Failed to json marshal the data&quot;, ex);</span>
+<span class="fc" id="L70">            }</span>
+        }
+<span class="fc" id="L72">        return bytes;</span>
+    }
+
+    /**
+     * Sets the value of the line breaker. The line breaker is used to add a separator value that is streamed along
+     * with the event into Splunk. This line breaker value can then be used in conjunction with the Splunk configurable
+     * LINE_BREAKER to &lt;a href=&quot;http://docs.splunk.com/Documentation/Splunk/7.0.1/Data/Configureeventlinebreaking&quot;&gt;
+     * break events&lt;/a&gt;.
+     *
+     * @return Current representation of RawEvent.
+     *
+     * @since   1.0
+     */
+    public final Event setLineBreaker(final String breaker) {
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        if (breaker != null) {</span>
+<span class="fc" id="L87">            this.lineBreaker = breaker;</span>
+        }
+<span class="fc" id="L89">        return this;</span>
+    }
+
+    /**
+     * Raw event is serialized to a String and returned.
+     *
+     * @return   String representation of RawEvent including all variables in superclass Event.
+     *
+     * @throws  HecException
+     * @since   1.0
+     */
+    @Override
+    public String toString() {
+<span class="fc" id="L102">        return new String(getBytes(), StandardCharsets.UTF_8);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.7.9.201702052155</span></div></body></html>
